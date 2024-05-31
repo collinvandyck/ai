@@ -1,7 +1,15 @@
 #![allow(unused)]
+use ai::{prelude::*, tui};
 use std::{io, panic::catch_unwind};
 
-use ai::{prelude::*, tui};
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Unknown(#[from] Box<dyn std::error::Error>),
+
+    #[error(transparent)]
+    Draw(io::Error),
+}
 
 fn main() -> Result<(), Error> {
     let mut term = tui::init()?;
@@ -17,15 +25,6 @@ fn main() -> Result<(), Error> {
 struct App {
     counter: u8,
     exit: bool,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Unknown(#[from] Box<dyn std::error::Error>),
-
-    #[error(transparent)]
-    Draw(io::Error),
 }
 
 impl App {
