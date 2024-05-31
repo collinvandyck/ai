@@ -1,5 +1,5 @@
 #![allow(unused)]
-use ai::{prelude::*, tui};
+use ai::{errors, prelude::*, tui};
 use crossterm::event::KeyEvent;
 use ratatui::{layout::Alignment, symbols::border, text::Text, widgets::Borders};
 use std::{io, panic::catch_unwind};
@@ -14,13 +14,17 @@ pub enum Error {
 
     #[error(transparent)]
     ReadEvent(io::Error),
+
+    #[error(transparent)]
+    Eyre(#[from] color_eyre::Report),
 }
 
 fn main() -> Result<(), Error> {
+    errors::install_hooks()?;
     let mut term = tui::init()?;
-    let res = App::default().run(&mut term);
+    App::default().run(&mut term)?;
     tui::restore()?;
-    res
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -68,6 +72,9 @@ impl App {
     }
 
     fn decrement_counter(&mut self) {
+        if true {
+            self.counter -= 1;
+        }
         let (v, _) = self.counter.overflowing_sub(1);
         self.counter = v;
     }
