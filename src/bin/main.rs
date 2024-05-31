@@ -52,8 +52,8 @@ impl App {
     fn handle_key_event(&mut self, ke: KeyEvent) {
         match ke.code {
             KeyCode::Char('q') => self.exit(),
-            KeyCode::Left => self.decrement_counter(),
-            KeyCode::Right => self.increment_counter(),
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('j') => self.decrement_counter(),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('k') => self.increment_counter(),
             _ => {}
         }
     }
@@ -63,11 +63,13 @@ impl App {
     }
 
     fn increment_counter(&mut self) {
-        self.counter = self.counter.saturating_add(1);
+        let (v, _) = self.counter.overflowing_add(1);
+        self.counter = v;
     }
 
     fn decrement_counter(&mut self) {
-        self.counter = self.counter.saturating_sub(1);
+        let (v, _) = self.counter.overflowing_sub(1);
+        self.counter = v;
     }
 }
 
