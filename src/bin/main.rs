@@ -1,10 +1,13 @@
 #![allow(unused)]
-use std::io;
+use std::{io, panic::catch_unwind};
 
 use ai::{prelude::*, tui};
 
 fn main() -> Result<(), Error> {
     let mut term = tui::init()?;
+    catch_unwind(|| {
+        let _ = tui::restore();
+    });
     let res = App::default().run(&mut term);
     tui::restore()?;
     res
