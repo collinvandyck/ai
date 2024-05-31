@@ -5,6 +5,7 @@ pub use crossterm::{
     ExecutableCommand,
 };
 pub use ratatui::prelude::Buffer;
+pub use ratatui::style::Style;
 pub use ratatui::widgets::Block;
 pub use ratatui::{
     prelude::{CrosstermBackend, Rect, Stylize, Terminal},
