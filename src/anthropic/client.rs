@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use super::models;
 
@@ -46,10 +46,22 @@ impl Client {
         })
     }
 
+    pub async fn speak(&self, msg: &str) -> Result<Response> {
+        self.post_messages_req(MessagesRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            stream: false,
+            messages: vec![Message {
+                role: String::from("user"),
+                content: vec![Content::text(&msg)],
+            }],
+            ..Default::default()
+        })
+        .await
+    }
+
     pub async fn explain_image(&self, image: impl AsRef<Path>) -> Result<Response> {
-        let method = reqwest::Method::POST;
-        let url = self.endpoint.join("/v1/messages").context("build url")?;
-        let body = MessagesRequest {
+        self.post_messages_req(MessagesRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             stream: false,
@@ -61,7 +73,31 @@ impl Client {
                 ],
             }],
             ..Default::default()
-        };
+        })
+        .await
+    }
+
+    pub async fn stream_speak(&self, msg: &str) -> Result<()> {
+        self.post_streaming(MessagesRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            stream: true,
+            messages: vec![Message {
+                role: String::from("user"),
+                content: vec![Content::text(&msg)],
+            }],
+            system: Some(String::from(
+                "you are a helpful, wise modern day carl sagan.",
+            )),
+            ..Default::default()
+        })
+        .await
+    }
+
+    async fn post_messages_req(&self, req: impl Into<MessagesRequest>) -> Result<Response> {
+        let method = reqwest::Method::POST;
+        let url = self.endpoint.join("/v1/messages").context("build url")?;
+        let body = req.into();
         let req = self
             .new_http_req(method, url)
             .json(&body)
@@ -85,56 +121,13 @@ impl Client {
         Ok(resp)
     }
 
-    pub async fn speak(&self, msg: &str) -> Result<Response> {
+    async fn post_streaming(
+        &self,
+        req: impl Into<MessagesRequest>,
+    ) -> Result<mpsc::Receiver<Result<TextStreamEvent>>> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
-        let body = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens: self.max_tokens,
-            stream: false,
-            messages: vec![Message {
-                role: String::from("user"),
-                content: vec![Content::text(&msg)],
-            }],
-            ..Default::default()
-        };
-        let req = self
-            .new_http_req(method, url)
-            .json(&body)
-            .build()
-            .context("build request")?;
-        let resp = self.client.execute(req).await.context("exec req")?;
-        let text = resp.text().await.context("resp text")?;
-        let resp = match serde_json::from_str(&text).context("parse json") {
-            Ok(v) => v,
-            Err(err) => {
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let text = serde_json::to_string_pretty(&val).context("pretty json error")?;
-                    tracing::error!("Failed to parse:\n{text}");
-                }
-                tracing::error!("Failed to parse text:\n{text}");
-                return Err(err);
-            }
-        };
-        Ok(resp)
-    }
-
-    pub async fn stream_speak(&self, msg: &str) -> Result<()> {
-        let method = reqwest::Method::POST;
-        let url = self.endpoint.join("/v1/messages").context("build url")?;
-        let body = MessagesRequest {
-            model: self.model.clone(),
-            max_tokens: self.max_tokens,
-            stream: true,
-            messages: vec![Message {
-                role: String::from("user"),
-                content: vec![Content::text(&msg)],
-            }],
-            system: Some(String::from(
-                "you are a helpful, wise modern day carl sagan.",
-            )),
-            ..Default::default()
-        };
+        let body = req.into();
         let req = self
             .new_http_req(method, url)
             .json(&body)
@@ -147,59 +140,74 @@ impl Client {
             .context("exec req")?
             .bytes_stream()
             .eventsource();
-        let mut stream_msg = MessagesResponse::default();
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(event) => {
-                    let data = event.data;
-                    match serde_json::from_str::<StreamEvent>(&data) {
-                        Ok(event) => match event {
-                            StreamEvent::MessageStart { message } => {
-                                let MessagesResponse { content, .. } = &message;
-                                if !content.is_empty() {
-                                    anyhow::bail!("message start was not empty: {content:#?}");
+        let (tx, rx) = mpsc::channel(64);
+        tokio::spawn(async move {
+            let res = {
+                let tx = tx.clone();
+                async move {
+                    let mut stream_msg = MessagesResponse::default();
+                    while let Some(event) = stream.next().await {
+                        match event {
+                            Ok(event) => {
+                                let data = event.data;
+                                match serde_json::from_str::<ServerStreamEvent>(&data) {
+                                    Ok(event) => match event {
+                                        ServerStreamEvent::MessageStart { message } => {
+                                            let MessagesResponse { content, .. } = &message;
+                                            if !content.is_empty() {
+                                                anyhow::bail!(
+                                                    "message start was not empty: {content:#?}"
+                                                );
+                                            }
+                                            stream_msg = message;
+                                        }
+                                        ServerStreamEvent::StartBlock { index, content } => {
+                                            if index > 0 {
+                                                anyhow::bail!("start block index: {index}");
+                                            }
+                                            print!("{content}");
+                                            io::stdout().flush().context("flush stdout")?;
+                                        }
+                                        ServerStreamEvent::BlockDelta { index, delta } => {
+                                            if index > 0 {
+                                                anyhow::bail!("start block index: {index}");
+                                            }
+                                            print!("{delta}");
+                                            io::stdout().flush().context("flush stdout")?;
+                                        }
+                                        ServerStreamEvent::BlockStop { index } => {
+                                            if index > 0 {
+                                                anyhow::bail!("start block index: {index}");
+                                            }
+                                        }
+                                        ServerStreamEvent::MessageDelta { message } => {
+                                            stream_msg.extend(message);
+                                        }
+                                        ServerStreamEvent::MessageStop => {
+                                            println!();
+                                        }
+                                        ServerStreamEvent::Ping => {}
+                                    },
+                                    Err(err) => {
+                                        tracing::error!("failed to unmarshal\n{data}");
+                                        anyhow::bail!(err);
+                                    }
                                 }
-                                stream_msg = message;
                             }
-                            StreamEvent::StartBlock { index, content } => {
-                                if index > 0 {
-                                    anyhow::bail!("start block index: {index}");
-                                }
-                                print!("{content}");
-                                io::stdout().flush().context("flush stdout")?;
+                            Err(err) => {
+                                anyhow::bail!("event stream err: {err}");
                             }
-                            StreamEvent::BlockDelta { index, delta } => {
-                                if index > 0 {
-                                    anyhow::bail!("start block index: {index}");
-                                }
-                                print!("{delta}");
-                                io::stdout().flush().context("flush stdout")?;
-                            }
-                            StreamEvent::BlockStop { index } => {
-                                if index > 0 {
-                                    anyhow::bail!("start block index: {index}");
-                                }
-                            }
-                            StreamEvent::MessageDelta { message } => {
-                                stream_msg.extend(message);
-                            }
-                            StreamEvent::MessageStop => {
-                                println!();
-                            }
-                            StreamEvent::Ping => {}
-                        },
-                        Err(err) => {
-                            tracing::error!("failed to unmarshal\n{data}");
-                            anyhow::bail!(err);
                         }
                     }
+                    Ok(())
                 }
-                Err(err) => {
-                    anyhow::bail!("event stream err: {err}");
-                }
+                .await
+            };
+            if let Err(err) = res {
+                let _ = tx.send(Err(err)).await;
             }
-        }
-        Ok(())
+        });
+        Ok(rx)
     }
 
     fn new_http_req(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
@@ -211,9 +219,16 @@ impl Client {
     }
 }
 
+#[derive(Debug)]
+enum TextStreamEvent {
+    Fragment(String),
+    EOF,
+}
+
+/// events unpacked from the server
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-pub enum StreamEvent {
+pub enum ServerStreamEvent {
     #[serde(rename = "message_start")]
     MessageStart { message: MessagesResponse },
     #[serde(rename = "content_block_start")]
