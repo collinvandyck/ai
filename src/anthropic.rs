@@ -6,12 +6,13 @@ use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::BorrowMut,
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::Path,
     str::FromStr,
     sync::Arc,
     time::Duration,
 };
+use tokio::io::AsyncWriteExt;
 
 pub struct Client {
     key: String,
@@ -146,7 +147,7 @@ impl Client {
             .context("exec req")?
             .bytes_stream()
             .eventsource();
-        let mut stream_msg = None;
+        let mut stream_msg = MessagesResponse::default();
         while let Some(event) = stream.next().await {
             match event {
                 Ok(event) => {
@@ -158,19 +159,21 @@ impl Client {
                                 if !content.is_empty() {
                                     anyhow::bail!("message start was not empty: {content:#?}");
                                 }
-                                stream_msg.replace(message);
+                                stream_msg = message;
                             }
                             StreamEvent::StartBlock { index, content } => {
                                 if index > 0 {
                                     anyhow::bail!("start block index: {index}");
                                 }
                                 print!("{content}");
+                                io::stdout().flush().context("flush stdout")?;
                             }
                             StreamEvent::BlockDelta { index, delta } => {
                                 if index > 0 {
                                     anyhow::bail!("start block index: {index}");
                                 }
                                 print!("{delta}");
+                                io::stdout().flush().context("flush stdout")?;
                             }
                             StreamEvent::BlockStop { index } => {
                                 if index > 0 {
@@ -178,9 +181,6 @@ impl Client {
                                 }
                             }
                             StreamEvent::MessageDelta { message } => {
-                                let Some(stream_msg) = &mut stream_msg else {
-                                    anyhow::bail!("no start message");
-                                };
                                 stream_msg.extend(message);
                             }
                             StreamEvent::MessageStop => {
@@ -193,7 +193,6 @@ impl Client {
                             anyhow::bail!(err);
                         }
                     }
-                    std::io::stdout().flush().context("flush stdout")?;
                 }
                 Err(err) => {
                     anyhow::bail!("event stream err: {err}");

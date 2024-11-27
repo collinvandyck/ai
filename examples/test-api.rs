@@ -1,7 +1,8 @@
-use std::{env, error::Error};
+use std::{env, error::Error, io::Write};
 
 use anyhow::Context;
 use clap::Parser;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::info;
 
 #[derive(clap::Parser, Debug)]
@@ -43,7 +44,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             client.stream_speak("explain HDR").await?;
         }
         Command::Repl => {
-            //
+            let mut input = BufReader::new(tokio::io::stdin());
+            loop {
+                print!("> ");
+                std::io::stdout().flush()?;
+                let mut buf = String::new();
+                if input.read_line(&mut buf).await? == 0 {
+                    println!();
+                    break;
+                }
+                println!();
+                let buf = buf.trim();
+                if !buf.is_empty() {
+                    client.stream_speak(buf).await?;
+                    println!();
+                }
+            }
         }
     };
     Ok(())
