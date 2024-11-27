@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await
             .context("speak")?,
         Command::Image => client
-            .explain_image("foo.jpg")
+            .explain_image("images/collin.jpeg")
             .await
             .context("explain_image")?,
     };

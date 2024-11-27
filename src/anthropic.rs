@@ -60,7 +60,12 @@ impl Client {
         let resp = match serde_json::from_str(&text).context("parse json") {
             Ok(v) => v,
             Err(err) => {
-                tracing::error!("Failed to parse text:\n{text}");
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let text = serde_json::to_string_pretty(&val).context("pretty json error")?;
+                    tracing::error!("Failed to parse:\n{text}");
+                } else {
+                    tracing::error!("Failed to parse:\n{text}");
+                }
                 return Err(err);
             }
         };
@@ -88,6 +93,10 @@ impl Client {
         let resp = match serde_json::from_str(&text).context("parse json") {
             Ok(v) => v,
             Err(err) => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let text = serde_json::to_string_pretty(&val).context("pretty json error")?;
+                    tracing::error!("Failed to parse:\n{text}");
+                }
                 tracing::error!("Failed to parse text:\n{text}");
                 return Err(err);
             }
@@ -108,7 +117,7 @@ impl Client {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum Response {
-    #[serde(rename = "messages")]
+    #[serde(rename = "message")]
     Messages(MessagesResponse),
     #[serde(rename = "error")]
     Error { error: ServerError },
@@ -211,6 +220,31 @@ mod tests {
     #[test]
     fn serde_error_resp() {
         let json = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0.image.source.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'"}}"#;
+        let c: Response = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn serde_err_resp2() {
+        let json = r#"
+            {
+              "content": [
+                {
+                  "text": "Use reqwest with serde for JSON serialization/deserialization and implement the API endpoints as async functions that take a string prompt and return a Result containing the model's response.",
+                  "type": "text"
+                }
+              ],
+              "id": "msg_01BhheLXdCtJUbMsZ3enae5i",
+              "model": "claude-3-5-sonnet-20241022",
+              "role": "assistant",
+              "stop_reason": "end_turn",
+              "stop_sequence": null,
+              "type": "message",
+              "usage": {
+                "input_tokens": 19,
+                "output_tokens": 40
+              }
+            }
+        "#;
         let c: Response = serde_json::from_str(json).unwrap();
     }
 }
