@@ -5,6 +5,7 @@ use futures::StreamExt;
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::BorrowMut,
     io::{Read, Write},
     path::Path,
     str::FromStr,
@@ -27,7 +28,7 @@ const HAIKU: &str = "claude-3-5-haiku-latest";
 impl Client {
     pub fn new(key: String) -> Result<Self> {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
-        let model = String::from(SONNET);
+        let model = String::from(HAIKU);
         let version = String::from("2023-06-01");
         let max_tokens = 4096;
         let client = reqwest::ClientBuilder::default()
@@ -133,8 +134,6 @@ impl Client {
             )),
             ..Default::default()
         };
-        let bjson = serde_json::to_string_pretty(&body).context("string pretty")?;
-        tracing::info!("Sending request:\n{bjson}");
         let req = self
             .new_http_req(method, url)
             .json(&body)
@@ -147,27 +146,43 @@ impl Client {
             .context("exec req")?
             .bytes_stream()
             .eventsource();
+        let mut stream_msg = None;
         while let Some(event) = stream.next().await {
             match event {
                 Ok(event) => {
                     let data = event.data;
                     match serde_json::from_str::<StreamEvent>(&data) {
                         Ok(event) => match event {
-                            StreamEvent::MessageStart {
-                                message: MessagesResponse { content, .. },
-                            } => {
+                            StreamEvent::MessageStart { message } => {
+                                let MessagesResponse { content, .. } = &message;
                                 if !content.is_empty() {
                                     anyhow::bail!("message start was not empty: {content:#?}");
                                 }
+                                stream_msg.replace(message);
                             }
                             StreamEvent::StartBlock { index, content } => {
+                                if index > 0 {
+                                    anyhow::bail!("start block index: {index}");
+                                }
                                 print!("{content}");
                             }
                             StreamEvent::BlockDelta { index, delta } => {
+                                if index > 0 {
+                                    anyhow::bail!("start block index: {index}");
+                                }
                                 print!("{delta}");
                             }
-                            StreamEvent::BlockStop { index } => {}
-                            StreamEvent::MessageDelta { delta } => {}
+                            StreamEvent::BlockStop { index } => {
+                                if index > 0 {
+                                    anyhow::bail!("start block index: {index}");
+                                }
+                            }
+                            StreamEvent::MessageDelta { message } => {
+                                let Some(stream_msg) = &mut stream_msg else {
+                                    anyhow::bail!("no start message");
+                                };
+                                stream_msg.extend(message);
+                            }
                             StreamEvent::MessageStop => {
                                 println!();
                             }
@@ -213,7 +228,10 @@ pub enum StreamEvent {
     #[serde(rename = "content_block_stop")]
     BlockStop { index: usize },
     #[serde(rename = "message_delta")]
-    MessageDelta { delta: MessagesResponse },
+    MessageDelta {
+        #[serde(rename = "delta")]
+        message: MessagesResponse,
+    },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(rename = "ping")]
@@ -256,6 +274,37 @@ pub struct MessagesResponse {
     stop_reason: Option<String>,
     stop_sequence: Option<String>,
     usage: Option<Usage>,
+}
+
+impl MessagesResponse {
+    fn extend(&mut self, other: Self) {
+        self.content.extend(other.content);
+        if !other.id.is_empty() {
+            self.id = other.id;
+        }
+        if !other.model.is_empty() {
+            self.model = other.model;
+        }
+        if !other.role.is_empty() {
+            self.role = other.role;
+        }
+        if let Some(stop) = other.stop_reason {
+            self.stop_reason.replace(stop);
+        }
+        if let Some(stop) = other.stop_sequence {
+            self.stop_sequence.replace(stop);
+        }
+        if let Some(other) = other.usage {
+            match &mut self.usage {
+                Some(usage) => {
+                    usage.extend(other);
+                }
+                _ => {
+                    self.usage.replace(other);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -321,15 +370,22 @@ struct Message {
     content: Vec<Content>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct Usage {
     input_tokens: u64,
     output_tokens: u64,
 }
 
+impl Usage {
+    fn extend(&mut self, other: Self) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Content, Response};
+    use super::{Content, MessagesResponse, Response, Usage};
 
     #[test]
     fn serde_content() {
@@ -372,5 +428,42 @@ mod tests {
             }
         "#;
         let c: Response = serde_json::from_str(json).unwrap();
+    }
+
+    #[test]
+    fn response_merge() {
+        let mut r1 = MessagesResponse {
+            usage: None,
+            ..Default::default()
+        };
+        let r2 = MessagesResponse {
+            usage: Some(Usage {
+                input_tokens: 42,
+                output_tokens: 420,
+            }),
+            ..Default::default()
+        };
+        r1.extend(r2);
+        assert_eq!(
+            r1.usage,
+            Some(Usage {
+                input_tokens: 42,
+                output_tokens: 420,
+            })
+        );
+        r1.extend(MessagesResponse {
+            usage: Some(Usage {
+                input_tokens: 42,
+                output_tokens: 420,
+            }),
+            ..Default::default()
+        });
+        assert_eq!(
+            r1.usage,
+            Some(Usage {
+                input_tokens: 42 * 2,
+                output_tokens: 420 * 2,
+            })
+        );
     }
 }

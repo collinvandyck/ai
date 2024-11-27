@@ -40,9 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             info!("Response:\n{resp:#?}");
         }
         Command::StreamSpeak => {
-            client
-                .stream_speak("explain the history of endianness")
-                .await?;
+            client.stream_speak("explain HDR").await?;
         }
         Command::Repl => {
             //
