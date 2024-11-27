@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::BorrowMut,
     io::{self, Read, Write},
+    ops::Deref,
     path::Path,
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tokio::io::AsyncWriteExt;
@@ -23,13 +24,33 @@ pub struct Client {
     client: reqwest::Client,
 }
 
-const SONNET: &str = "claude-3-5-sonnet-latest";
-const HAIKU: &str = "claude-3-5-haiku-latest";
+mod models {
+    use super::Model;
+    use std::sync::LazyLock;
+
+    pub static SONNET: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-sonnet-latest"));
+    pub static HAIKU: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-haiku-latest"));
+}
+
+#[derive(Debug)]
+struct Model(String);
+
+impl Deref for Model {
+    type Target = String;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl From<&str> for Model {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
 
 impl Client {
     pub fn new(key: String) -> Result<Self> {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
-        let model = String::from(HAIKU);
+        let model = models::HAIKU.clone();
         let version = String::from("2023-06-01");
         let max_tokens = 4096;
         let client = reqwest::ClientBuilder::default()
