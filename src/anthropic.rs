@@ -1,6 +1,7 @@
 use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use base64::{prelude::BASE64_STANDARD, Engine};
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -155,10 +156,12 @@ impl Content {
     }
 
     async fn image_path(p: impl AsRef<Path>) -> Result<Self> {
-        let mime = mime_guess::from_path(p)
+        let mime = mime_guess::from_path(&p)
             .first()
             .context("no mime type from filename")?;
-        let data = "";
+        let bs = tokio::fs::read(&p).await.context("read file")?;
+        let mut data = String::new();
+        BASE64_STANDARD.encode_string(&bs, &mut data);
         Ok(Self::Image {
             source: ImageSource {
                 typ: String::from("base64"),
