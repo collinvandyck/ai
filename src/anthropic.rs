@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
+use eventsource_stream::Eventsource;
+use futures::StreamExt;
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
@@ -41,8 +43,6 @@ impl Client {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             stream: false,
-            system: None,
-            temperature: 1.0,
             messages: vec![Message {
                 role: String::from("user"),
                 content: vec![
@@ -74,10 +74,6 @@ impl Client {
         Ok(resp)
     }
 
-    pub async fn stream_speak(&self, msg: &str) -> Result<Response> {
-        todo!()
-    }
-
     pub async fn speak(&self, msg: &str) -> Result<Response> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
@@ -85,8 +81,6 @@ impl Client {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             stream: false,
-            system: None,
-            temperature: 1.0,
             messages: vec![Message {
                 role: String::from("user"),
                 content: vec![Content::text(&msg)],
@@ -111,6 +105,41 @@ impl Client {
             }
         };
         Ok(resp)
+    }
+
+    pub async fn stream_speak(&self, msg: &str) -> Result<Response> {
+        let method = reqwest::Method::POST;
+        let url = self.endpoint.join("/v1/messages").context("build url")?;
+        let body = MessagesRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            stream: true,
+            messages: vec![Message {
+                role: String::from("user"),
+                content: vec![Content::text(&msg)],
+            }],
+        };
+        let bjson = serde_json::to_string_pretty(&body).context("string pretty")?;
+        tracing::info!("Sending request:\n{bjson}");
+        let req = self
+            .new_http_req(method, url)
+            .json(&body)
+            .build()
+            .context("build request")?;
+        tracing::info!("built request");
+        let mut stream = self
+            .client
+            .execute(req)
+            .await
+            .context("exec req")?
+            .bytes_stream()
+            .eventsource();
+        tracing::info!("built stream");
+        while let Some(event) = stream.next().await {
+            tracing::info!("Got event: {event:#?}");
+        }
+        tracing::info!("Done with stream.");
+        todo!()
     }
 
     fn new_http_req(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
@@ -144,8 +173,6 @@ struct MessagesRequest {
     model: String,
     max_tokens: u32,
     stream: bool,
-    system: Option<String>,
-    temperature: f64,
     messages: Vec<Message>,
 }
 
