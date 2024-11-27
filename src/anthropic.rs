@@ -33,7 +33,7 @@ impl Client {
         })
     }
 
-    async fn speak(&self, msg: &str) -> Result<MessagesResponse> {
+    pub async fn speak(&self, msg: &str) -> Result<MessagesResponse> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = MessagesRequest {
@@ -50,7 +50,7 @@ impl Client {
             .build()
             .context("build request")?;
         let resp = self.client.execute(req).await.context("exec req")?;
-        let resp = resp.json::<MessagesResponse>().await?;
+        let resp = resp.json::<MessagesResponse>().await.context("resp json")?;
         Ok(resp)
     }
 
@@ -71,12 +71,14 @@ struct MessagesRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct MessagesResponse {
+pub struct MessagesResponse {
     content: Vec<Message>,
     id: String,
     model: String,
-    role: String,
+    #[serde(default)]
+    role: Option<String>,
     stop_reason: String,
+    #[serde(default)]
     stop_sequence: Option<String>,
     #[serde(rename = "type")]
     kind: String,
