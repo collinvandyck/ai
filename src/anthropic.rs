@@ -155,12 +155,14 @@ impl Content {
     }
 
     async fn image_path(p: impl AsRef<Path>) -> Result<Self> {
-        let media_type = "";
+        let mime = mime_guess::from_path(p)
+            .first()
+            .context("no mime type from filename")?;
         let data = "";
         Ok(Self::Image {
             source: ImageSource {
                 typ: String::from("base64"),
-                media_type: media_type.to_string(),
+                media_type: mime.to_string(),
                 data: data.to_string(),
             },
         })
