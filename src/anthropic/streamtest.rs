@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    process::Output,
     task::{Context, Poll},
 };
 
@@ -54,20 +55,20 @@ mod tests {
 }
 
 struct Repeat<F, Fut> {
-    f: F,
-    state: RepeatState<Pin<Box<Fut>>>,
+    f: Pin<Box<F>>,
+    state: RepeatState<Fut>,
 }
 
-impl<F, Fut> Unpin for Repeat<F, Fut> {}
+//impl<F, Fut> Unpin for Repeat<F, Fut> {}
 
 impl<F, Fut, Item> Repeat<F, Fut>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Item>,
+    Fut: Future<Output = Item> + Unpin,
 {
-    fn new(f: F) -> Self {
+    fn new(f: F) -> impl Stream<Item = Item> {
         Self {
-            f,
+            f: Box::pin(f),
             state: RepeatState::Empty,
         }
     }
@@ -75,13 +76,13 @@ where
 
 enum RepeatState<Fut> {
     Empty,
-    Future { fut: Fut },
+    Future { fut: Pin<Box<Fut>> },
 }
 
 impl<F, Fut, Item> Stream for Repeat<F, Fut>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = Item>,
+    Fut: Future<Output = Item> + Unpin,
 {
     type Item = Item;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -108,21 +109,20 @@ where
                     Poll::Pending => Poll::Pending,
                 }
             }
+            _ => Poll::Pending,
         }
     }
 }
 
 #[cfg(test)]
 mod repeat_test {
+    use super::*;
     use futures::StreamExt;
     use tokio::pin;
 
-    use super::*;
-
     #[tokio::test]
     async fn repeat_test() {
-        let mut s = Repeat::new(|| async { 42 });
-        assert_eq!(s.next().await.unwrap(), 42);
+        let mut s = Repeat::new(|| Box::pin(async { 42 }));
         assert_eq!(s.next().await.unwrap(), 42);
     }
 }
