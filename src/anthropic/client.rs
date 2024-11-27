@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use eventsource_stream::Eventsource;
-use futures::StreamExt;
+use futures::{channel::mpsc::Receiver, Stream, StreamExt};
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -78,20 +78,32 @@ impl Client {
     }
 
     pub async fn stream_speak(&self, msg: &str) -> Result<()> {
-        self.post_streaming(MessagesRequest {
-            model: self.model.clone(),
-            max_tokens: self.max_tokens,
-            stream: true,
-            messages: vec![Message {
-                role: String::from("user"),
-                content: vec![Content::text(&msg)],
-            }],
-            system: Some(String::from(
-                "you are a helpful, wise modern day carl sagan.",
-            )),
-            ..Default::default()
-        })
-        .await
+        let mut rx = self
+            .post_streaming(MessagesRequest {
+                model: self.model.clone(),
+                max_tokens: self.max_tokens,
+                stream: true,
+                messages: vec![Message {
+                    role: String::from("user"),
+                    content: vec![Content::text(&msg)],
+                }],
+                system: Some(String::from(
+                    "you are a helpful, wise modern day carl sagan.",
+                )),
+                ..Default::default()
+            })
+            .await?;
+        while let Some(ev) = rx.recv().await {
+            let ev = ev.context("stream error")?;
+            match ev {
+                TextStreamEvent::Fragment(s) => {
+                    print!("{s}");
+                    io::stdout().flush().context("flush stdout")?;
+                }
+                TextStreamEvent::EOF(_) => todo!(),
+            }
+        }
+        Ok(())
     }
 
     async fn post_messages_req(&self, req: impl Into<MessagesRequest>) -> Result<Response> {
@@ -141,72 +153,7 @@ impl Client {
             .bytes_stream()
             .eventsource();
         let (tx, rx) = mpsc::channel(64);
-        tokio::spawn(async move {
-            let res = {
-                let tx = tx.clone();
-                async move {
-                    let mut stream_msg = MessagesResponse::default();
-                    while let Some(event) = stream.next().await {
-                        match event {
-                            Ok(event) => {
-                                let data = event.data;
-                                match serde_json::from_str::<ServerStreamEvent>(&data) {
-                                    Ok(event) => match event {
-                                        ServerStreamEvent::MessageStart { message } => {
-                                            let MessagesResponse { content, .. } = &message;
-                                            if !content.is_empty() {
-                                                anyhow::bail!(
-                                                    "message start was not empty: {content:#?}"
-                                                );
-                                            }
-                                            stream_msg = message;
-                                        }
-                                        ServerStreamEvent::StartBlock { index, content } => {
-                                            if index > 0 {
-                                                anyhow::bail!("start block index: {index}");
-                                            }
-                                            print!("{content}");
-                                            io::stdout().flush().context("flush stdout")?;
-                                        }
-                                        ServerStreamEvent::BlockDelta { index, delta } => {
-                                            if index > 0 {
-                                                anyhow::bail!("start block index: {index}");
-                                            }
-                                            print!("{delta}");
-                                            io::stdout().flush().context("flush stdout")?;
-                                        }
-                                        ServerStreamEvent::BlockStop { index } => {
-                                            if index > 0 {
-                                                anyhow::bail!("start block index: {index}");
-                                            }
-                                        }
-                                        ServerStreamEvent::MessageDelta { message } => {
-                                            stream_msg.extend(message);
-                                        }
-                                        ServerStreamEvent::MessageStop => {
-                                            println!();
-                                        }
-                                        ServerStreamEvent::Ping => {}
-                                    },
-                                    Err(err) => {
-                                        tracing::error!("failed to unmarshal\n{data}");
-                                        anyhow::bail!(err);
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                anyhow::bail!("event stream err: {err}");
-                            }
-                        }
-                    }
-                    Ok(())
-                }
-                .await
-            };
-            if let Err(err) = res {
-                let _ = tx.send(Err(err)).await;
-            }
-        });
+        tokio::spawn(stream_text_events(stream, tx));
         Ok(rx)
     }
 
@@ -222,7 +169,59 @@ impl Client {
 #[derive(Debug)]
 enum TextStreamEvent {
     Fragment(String),
-    EOF,
+    EOF(MessagesResponse),
+}
+
+async fn stream_text_events<S>(stream: S, tx: mpsc::Sender<Result<TextStreamEvent>>)
+where
+    S: Stream<
+        Item = Result<
+            eventsource_stream::Event,
+            eventsource_stream::EventStreamError<reqwest::Error>,
+        >,
+    >,
+{
+    let mut process = |mut stream: S, tx: mpsc::Sender<Result<TextStreamEvent>>| async move {
+        tokio::pin!(stream);
+        let mut resp = MessagesResponse::default();
+        while let Some(event) = stream.next().await {
+            let event: ServerStreamEvent = event
+                .context("stream error")
+                .and_then(|e| serde_json::from_str(&e.data).context("parse json"))?;
+            match event {
+                ServerStreamEvent::MessageStart { message } => {
+                    resp.extend(message);
+                }
+                ServerStreamEvent::StartBlock { index, content } => {
+                    anyhow::ensure!(index == 0, "bad index: {index}");
+                    let event = Ok(TextStreamEvent::Fragment(content.to_string()));
+                    if tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
+                ServerStreamEvent::BlockDelta { index, delta } => {
+                    anyhow::ensure!(index == 0, "bad index: {index}");
+                    let event = Ok(TextStreamEvent::Fragment(delta.to_string()));
+                    if tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
+                ServerStreamEvent::BlockStop { index } => {
+                    anyhow::ensure!(index == 0, "bad index: {index}");
+                }
+                ServerStreamEvent::MessageDelta { message } => {
+                    resp.extend(message);
+                }
+                ServerStreamEvent::MessageStop => {}
+                ServerStreamEvent::Ping => {}
+            };
+        }
+        anyhow::Ok(())
+    };
+    let res = process(stream, tx.clone()).await;
+    if let Err(err) = res {
+        let _ = tx.send(Err(err.into())).await;
+    }
 }
 
 /// events unpacked from the server
