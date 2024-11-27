@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use eventsource_stream::Eventsource;
-use futures::{channel::mpsc::Receiver, Stream, StreamExt};
+use futures::{channel::mpsc::Receiver, Stream, StreamExt, TryStreamExt};
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -78,23 +78,22 @@ impl Client {
     }
 
     pub async fn stream_speak(&self, msg: &str) -> Result<()> {
-        let mut rx = self
-            .post_streaming(MessagesRequest {
-                model: self.model.clone(),
-                max_tokens: self.max_tokens,
-                stream: true,
-                messages: vec![Message {
-                    role: String::from("user"),
-                    content: vec![Content::text(&msg)],
-                }],
-                system: Some(String::from(
-                    "you are a helpful, wise modern day carl sagan.",
-                )),
-                ..Default::default()
-            })
-            .await?;
+        let req = MessagesRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            stream: true,
+            messages: vec![Message {
+                role: String::from("user"),
+                content: vec![Content::text(&msg)],
+            }],
+            system: Some(String::from(
+                "you are a helpful, wise modern day carl sagan.",
+            )),
+            ..Default::default()
+        };
+        let mut rx = self.post_streaming(req).await?;
         while let Some(ev) = rx.recv().await {
-            let ev = ev.context("stream error")?;
+            let ev = ev.context("text stream error")?;
             match ev {
                 TextStreamEvent::Fragment(s) => {
                     print!("{s}");
@@ -172,6 +171,74 @@ enum TextStreamEvent {
     EOF(MessagesResponse),
 }
 
+async fn event_stream_to_text_events<S>(stream: S) -> impl Stream<Item = Result<TextStreamEvent>>
+where
+    S: Stream<
+        Item = Result<
+            eventsource_stream::Event,
+            eventsource_stream::EventStreamError<reqwest::Error>,
+        >,
+    >,
+{
+    type Mutex<T> = tokio::sync::Mutex<T>;
+    let res = MessagesResponse::default();
+    let res = Arc::new(Mutex::new(Some(res)));
+    stream
+        .map(|e| e.context("event stream error"))
+        .and_then(|e| async move {
+            serde_json::from_str::<ServerStreamEvent>(&e.data)
+                .context("parse ServerStreamEvent json")
+        })
+        .and_then(move |sse| {
+            let msg = res.clone();
+            async move {
+                match sse {
+                    ServerStreamEvent::MessageStart { message } => {
+                        let mut res = msg.lock().await;
+                        match res.as_mut() {
+                            Some(res) => res.extend(message),
+                            None => anyhow::bail!("no acc"),
+                        }
+                        Ok(None)
+                    }
+                    ServerStreamEvent::StartBlock { index, content } => {
+                        anyhow::ensure!(index == 0, "index not zero");
+                        Ok(Some(TextStreamEvent::Fragment(content.to_string())))
+                    }
+                    ServerStreamEvent::BlockDelta { index, delta } => {
+                        anyhow::ensure!(index == 0, "index not zero");
+                        Ok(Some(TextStreamEvent::Fragment(delta.to_string())))
+                    }
+                    ServerStreamEvent::BlockStop { index } => {
+                        anyhow::ensure!(index == 0, "index not zero");
+                        Ok(None)
+                    }
+                    ServerStreamEvent::MessageDelta { message } => {
+                        let mut res = msg.lock().await;
+                        match res.as_mut() {
+                            Some(res) => res.extend(message),
+                            None => anyhow::bail!("no acc"),
+                        }
+                        Ok(None)
+                    }
+                    ServerStreamEvent::MessageStop => {
+                        let msg = msg.lock().await.take().context("no acc")?;
+                        Ok(Some(TextStreamEvent::EOF(msg)))
+                    }
+                    ServerStreamEvent::Ping => Ok(None),
+                }
+            }
+        })
+        .filter_map(|e| async move {
+            match e {
+                Ok(Some(e)) => Some(Ok(e)),
+                Ok(None) => None,
+                Err(err) => Some(Err(err)),
+            }
+        })
+}
+
+/// consumes the eventsource stream and produces TextStreamEvents onto the supplied sender
 async fn stream_text_events<S>(stream: S, tx: mpsc::Sender<Result<TextStreamEvent>>)
 where
     S: Stream<
@@ -186,7 +253,7 @@ where
         let mut resp = MessagesResponse::default();
         while let Some(event) = stream.next().await {
             let event: ServerStreamEvent = event
-                .context("stream error")
+                .context("eventsource stream error")
                 .and_then(|e| serde_json::from_str(&e.data).context("parse json"))?;
             match event {
                 ServerStreamEvent::MessageStart { message } => {
@@ -277,7 +344,7 @@ struct MessagesRequest {
     messages: Vec<Message>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct MessagesResponse {
     content: Vec<Content>,
@@ -326,7 +393,7 @@ struct Message {
     content: Vec<Content>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum Content {
     #[serde(rename = "text")]
@@ -375,7 +442,7 @@ impl Content {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImageSource {
     #[serde(rename = "type")]
     typ: String,
@@ -383,7 +450,7 @@ pub struct ImageSource {
     data: String,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Usage {
     input_tokens: u64,
     output_tokens: u64,
