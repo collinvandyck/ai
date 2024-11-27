@@ -306,6 +306,12 @@ impl MessagesResponse {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Message {
+    role: String,
+    content: Vec<Content>,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum Content {
@@ -361,12 +367,6 @@ pub struct ImageSource {
     typ: String,
     media_type: String,
     data: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Message {
-    role: String,
-    content: Vec<Content>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

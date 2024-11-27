@@ -8,4 +8,6 @@
 - https://docs.anthropic.com/en/api/messages
 - https://docs.anthropic.com/en/api/errors
 - https://docs.anthropic.com/en/api/messages-streaming
-
+- https://docs.anthropic.com/en/api/messages-examples
+- https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/use-xml-tags
+- https://docs.anthropic.com/en/docs/build-with-claude/embeddings
