@@ -4,8 +4,13 @@ use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
-use tracing::info;
+use std::{
+    io::{Read, Write},
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 pub struct Client {
     key: String,
@@ -16,10 +21,13 @@ pub struct Client {
     client: reqwest::Client,
 }
 
+const SONNET: &str = "claude-3-5-sonnet-20241022";
+const HAIKU: &str = "claude-3-5-haiku-20241022";
+
 impl Client {
     pub fn new(key: String) -> Result<Self> {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
-        let model = String::from("claude-3-5-sonnet-20241022");
+        let model = String::from(HAIKU);
         let version = String::from("2023-06-01");
         let max_tokens = 1024;
         let client = reqwest::ClientBuilder::default()
@@ -107,7 +115,7 @@ impl Client {
         Ok(resp)
     }
 
-    pub async fn stream_speak(&self, msg: &str) -> Result<Response> {
+    pub async fn stream_speak(&self, msg: &str) -> Result<()> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = MessagesRequest {
@@ -138,7 +146,33 @@ impl Client {
         while let Some(event) = stream.next().await {
             match event {
                 Ok(event) => {
-                    tracing::info!("{event:#?}");
+                    let data = event.data;
+                    match serde_json::from_str::<StreamEvent>(&data) {
+                        Ok(event) => match event {
+                            StreamEvent::MessageStart {
+                                message: MessagesResponse { content, .. },
+                            } => {
+                                if !content.is_empty() {
+                                    anyhow::bail!("message start was not empty: {content:#?}");
+                                }
+                            }
+                            StreamEvent::StartBlock { index, content } => {
+                                print!("{content}");
+                            }
+                            StreamEvent::BlockDelta { index, delta } => {
+                                print!("{delta}");
+                            }
+                            StreamEvent::BlockStop { index } => {}
+                            StreamEvent::MessageDelta { message } => {}
+                            StreamEvent::MessageStop => {}
+                            StreamEvent::Ping => {}
+                        },
+                        Err(err) => {
+                            tracing::error!("failed to unmarshal\n{data}");
+                            anyhow::bail!(err);
+                        }
+                    }
+                    std::io::stdout().flush().context("flush stdout")?;
                 }
                 Err(err) => {
                     anyhow::bail!("event stream err: {err}");
@@ -146,7 +180,7 @@ impl Client {
             }
         }
         tracing::info!("Done with stream.");
-        todo!()
+        Ok(())
     }
 
     fn new_http_req(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
@@ -162,20 +196,21 @@ impl Client {
 #[serde(tag = "type")]
 pub enum StreamEvent {
     #[serde(rename = "message_start")]
-    MessageStart(MessagesResponse),
+    MessageStart { message: MessagesResponse },
     #[serde(rename = "content_block_start")]
     StartBlock {
         index: usize,
-        content_block: Content,
+        #[serde(rename = "content_block")]
+        content: Content,
     },
     #[serde(rename = "content_block_delta")]
     BlockDelta { index: usize, delta: Content },
     #[serde(rename = "content_block_stop")]
     BlockStop { index: usize },
     #[serde(rename = "message_delta")]
-    MessageDelta,
+    MessageDelta { message: MessagesResponse },
     #[serde(rename = "message_stop")]
-    MessageStop(MessagesResponse),
+    MessageStop,
     #[serde(rename = "ping")]
     Ping,
 }
@@ -207,13 +242,14 @@ struct MessagesRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct MessagesResponse {
+    #[serde(default)]
     content: Vec<Content>,
     id: String,
     model: String,
     role: String,
-    stop_reason: String,
+    stop_reason: Option<String>,
     stop_sequence: Option<String>,
-    usage: Usage,
+    usage: Option<Usage>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -225,6 +261,20 @@ pub enum Content {
     TextDelta { text: String },
     #[serde(rename = "image")]
     Image { source: ImageSource },
+}
+
+impl std::fmt::Display for Content {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Content::Text { text } => write!(f, "{text}"),
+            Content::TextDelta { text } => write!(f, "{text}"),
+            Content::Image {
+                source: ImageSource {
+                    media_type, data, ..
+                },
+            } => write!(f, "[{media_type} ({} bytes)]", data.len()),
+        }
+    }
 }
 
 impl Content {
