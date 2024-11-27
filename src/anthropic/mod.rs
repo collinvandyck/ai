@@ -32,13 +32,12 @@ mod models {
     pub static HAIKU: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-haiku-latest"));
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Model(String);
 
-impl Deref for Model {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl std::fmt::Display for Model {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 impl From<&str> for Model {
@@ -50,7 +49,7 @@ impl From<&str> for Model {
 impl Client {
     pub fn new(key: String) -> Result<Self> {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
-        let model = models::HAIKU.clone();
+        let model = models::HAIKU.to_string();
         let version = String::from("2023-06-01");
         let max_tokens = 4096;
         let client = reqwest::ClientBuilder::default()
