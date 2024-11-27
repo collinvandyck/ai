@@ -91,18 +91,20 @@ impl Client {
             )),
             ..Default::default()
         };
-        let mut rx = self.post_streaming(req).await?;
-        while let Some(ev) = rx.recv().await {
-            let ev = ev.context("text stream error")?;
-            match ev {
-                TextStreamEvent::Fragment(s) => {
-                    print!("{s}");
-                    io::stdout().flush().context("flush stdout")?;
-                }
-                TextStreamEvent::EOF(_) => todo!(),
-            }
-        }
-        Ok(())
+        self.post_streaming_to_stream(req)
+            .await?
+            .try_for_each(|ev| async move {
+                match ev {
+                    TextStreamEvent::Fragment(s) => {
+                        print!("{s}");
+                        io::stdout().flush().context("flush stdout")?;
+                    }
+                    TextStreamEvent::EOF(_) => {}
+                };
+                Ok(())
+            })
+            .await
+            .context("text stream failure")
     }
 
     async fn post_messages_req(&self, req: impl Into<MessagesRequest>) -> Result<Response> {
@@ -130,6 +132,29 @@ impl Client {
             }
         };
         Ok(resp)
+    }
+
+    async fn post_streaming_to_stream(
+        &self,
+        req: impl Into<MessagesRequest>,
+    ) -> Result<impl Stream<Item = Result<TextStreamEvent>>> {
+        let method = reqwest::Method::POST;
+        let url = self.endpoint.join("/v1/messages").context("build url")?;
+        let body = req.into();
+        let req = self
+            .new_http_req(method, url)
+            .json(&body)
+            .build()
+            .context("build request")?;
+        let stream = self
+            .client
+            .execute(req)
+            .await
+            .context("exec req")?
+            .bytes_stream()
+            .eventsource();
+        let stream = event_stream_to_text_events(stream);
+        Ok(stream)
     }
 
     async fn post_streaming(
@@ -171,7 +196,7 @@ enum TextStreamEvent {
     EOF(MessagesResponse),
 }
 
-async fn event_stream_to_text_events<S>(stream: S) -> impl Stream<Item = Result<TextStreamEvent>>
+fn event_stream_to_text_events<S>(stream: S) -> impl Stream<Item = Result<TextStreamEvent>>
 where
     S: Stream<
         Item = Result<
