@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc, time::Duration};
+use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use reqwest::{Method, RequestBuilder};
@@ -33,6 +33,27 @@ impl Client {
         })
     }
 
+    //pub async fn explain_image(&self, image: impl AsRef<Path>) -> Result<MessagesResponse> {
+    //let method = reqwest::Method::POST;
+    //let url = self.endpoint.join("/v1/messages").context("build url")?;
+    //let body = MessagesRequest {
+    //model: self.model.clone(),
+    //max_tokens: self.max_tokens,
+    //messages: vec![Message {
+    //role: String::from("user"),
+    //content: msg.to_string(),
+    //}],
+    //};
+    //let req = self
+    //.new_request(method, url)
+    //.json(&body)
+    //.build()
+    //.context("build request")?;
+    //let resp = self.client.execute(req).await.context("exec req")?;
+    //let resp = resp.json::<MessagesResponse>().await.context("resp json")?;
+    //Ok(resp)
+    //}
+
     pub async fn speak(&self, msg: &str) -> Result<MessagesResponse> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
@@ -41,7 +62,9 @@ impl Client {
             max_tokens: self.max_tokens,
             messages: vec![Message {
                 role: String::from("user"),
-                content: msg.to_string(),
+                content: vec![Content::Text {
+                    text: msg.to_string(),
+                }],
             }],
         };
         let req = self
@@ -93,7 +116,7 @@ enum Content {
 #[derive(Debug, Serialize, Deserialize)]
 struct Message {
     role: String,
-    content: String,
+    content: Vec<Content>,
 }
 
 #[derive(Debug, Deserialize)]
