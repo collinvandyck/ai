@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 pub struct Client {
@@ -6,21 +9,27 @@ pub struct Client {
     model: String,
     version: String,
     max_tokens: u32,
+    client: reqwest::Client,
 }
 
 impl Client {
-    pub fn new(key: String) -> Self {
+    pub fn new(key: String) -> Result<Self> {
         let endpoint = String::from("https://api.anthropic.com");
         let model = String::from("claude-3-5-sonnet-20241022");
         let version = String::from("2023-06-01");
         let max_tokens = 1024;
-        Self {
+        let client = reqwest::ClientBuilder::default()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("build http client")?;
+        Ok(Self {
             key,
             endpoint,
             model,
             version,
             max_tokens,
-        }
+            client,
+        })
     }
 }
 
