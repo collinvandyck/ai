@@ -36,6 +36,7 @@ dependencies = [
  "clap",
  "eventsource-stream",
  "futures",
+ "futures-util",
  "mime_guess",
  "reqwest",
  "serde",
