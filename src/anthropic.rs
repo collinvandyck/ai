@@ -72,17 +72,22 @@ struct MessagesRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct MessagesResponse {
-    content: Vec<Message>,
+    content: Vec<Content>,
     id: String,
     model: String,
-    #[serde(default)]
-    role: Option<String>,
+    role: String,
     stop_reason: String,
-    #[serde(default)]
     stop_sequence: Option<String>,
     #[serde(rename = "type")]
     kind: String,
     usage: Usage,
+}
+
+#[derive(Debug, Deserialize)]
+struct Content {
+    text: String,
+    #[serde(rename = "type")]
+    kind: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
