@@ -83,11 +83,11 @@ pub struct MessagesResponse {
     usage: Usage,
 }
 
-#[derive(Debug, Deserialize)]
-struct Content {
-    text: String,
-    #[serde(rename = "type")]
-    kind: String,
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
+enum Content {
+    #[serde(rename = "text")]
+    Text { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -115,4 +115,21 @@ pub struct ServerErrorDetail {
 pub struct Usage {
     input_tokens: u64,
     output_tokens: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Content;
+
+    #[test]
+    fn serde_content() {
+        let js = r#"{"type":"text", "text":"foobar"}"#;
+        let c: Content = serde_json::from_str(js).unwrap();
+        assert_eq!(
+            c,
+            Content::Text {
+                text: String::from("foobar")
+            }
+        );
+    }
 }
