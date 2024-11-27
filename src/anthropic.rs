@@ -3,6 +3,7 @@ use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 pub struct Client {
     key: String,
@@ -33,28 +34,7 @@ impl Client {
         })
     }
 
-    //pub async fn explain_image(&self, image: impl AsRef<Path>) -> Result<MessagesResponse> {
-    //let method = reqwest::Method::POST;
-    //let url = self.endpoint.join("/v1/messages").context("build url")?;
-    //let body = MessagesRequest {
-    //model: self.model.clone(),
-    //max_tokens: self.max_tokens,
-    //messages: vec![Message {
-    //role: String::from("user"),
-    //content: msg.to_string(),
-    //}],
-    //};
-    //let req = self
-    //.new_request(method, url)
-    //.json(&body)
-    //.build()
-    //.context("build request")?;
-    //let resp = self.client.execute(req).await.context("exec req")?;
-    //let resp = resp.json::<MessagesResponse>().await.context("resp json")?;
-    //Ok(resp)
-    //}
-
-    pub async fn speak(&self, msg: &str) -> Result<MessagesResponse> {
+    pub async fn explain_image(&self, image: impl AsRef<Path>) -> Result<Response> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = MessagesRequest {
@@ -62,9 +42,10 @@ impl Client {
             max_tokens: self.max_tokens,
             messages: vec![Message {
                 role: String::from("user"),
-                content: vec![Content::Text {
-                    text: msg.to_string(),
-                }],
+                content: vec![
+                    Content::image_path(&image).await.context("image_path")?,
+                    Content::text("what is in this image?"),
+                ],
             }],
         };
         let req = self
@@ -73,7 +54,43 @@ impl Client {
             .build()
             .context("build request")?;
         let resp = self.client.execute(req).await.context("exec req")?;
-        let resp = resp.json::<MessagesResponse>().await.context("resp json")?;
+        let code = resp.status();
+        let text = resp.text().await.context("resp text")?;
+        let resp = match serde_json::from_str(&text).context("parse json") {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::error!("Failed to parse text:\n{text}");
+                return Err(err);
+            }
+        };
+        Ok(resp)
+    }
+
+    pub async fn speak(&self, msg: &str) -> Result<Response> {
+        let method = reqwest::Method::POST;
+        let url = self.endpoint.join("/v1/messages").context("build url")?;
+        let body = MessagesRequest {
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            messages: vec![Message {
+                role: String::from("user"),
+                content: vec![Content::text(&msg)],
+            }],
+        };
+        let req = self
+            .new_request(method, url)
+            .json(&body)
+            .build()
+            .context("build request")?;
+        let resp = self.client.execute(req).await.context("exec req")?;
+        let text = resp.text().await.context("resp text")?;
+        let resp = match serde_json::from_str(&text).context("parse json") {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::error!("Failed to parse text:\n{text}");
+                return Err(err);
+            }
+        };
         Ok(resp)
     }
 
@@ -84,6 +101,23 @@ impl Client {
             .header("anthropic-version", &self.version)
             .header("content-type", "application/json")
     }
+}
+
+// Anthropic response for all of its apis
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum Response {
+    #[serde(rename = "messages")]
+    Messages(MessagesResponse),
+    #[serde(rename = "error")]
+    Error { error: ServerError },
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ServerError {
+    #[serde(rename = "type")]
+    typ: String,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -101,8 +135,6 @@ pub struct MessagesResponse {
     role: String,
     stop_reason: String,
     stop_sequence: Option<String>,
-    #[serde(rename = "type")]
-    kind: String,
     usage: Usage,
 }
 
@@ -111,27 +143,42 @@ pub struct MessagesResponse {
 enum Content {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: ImageSource },
+}
+
+impl Content {
+    fn text(s: impl ToString) -> Self {
+        Content::Text {
+            text: s.to_string(),
+        }
+    }
+
+    async fn image_path(p: impl AsRef<Path>) -> Result<Self> {
+        let media_type = "";
+        let data = "";
+        Ok(Self::Image {
+            source: ImageSource {
+                typ: String::from("base64"),
+                media_type: media_type.to_string(),
+                data: data.to_string(),
+            },
+        })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ImageSource {
+    #[serde(rename = "type")]
+    typ: String,
+    media_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Message {
     role: String,
     content: Vec<Content>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ServerError {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(rename = "error")]
-    detail: ServerErrorDetail,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ServerErrorDetail {
-    #[serde(rename = "type")]
-    kind: String,
-    message: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,7 +189,7 @@ pub struct Usage {
 
 #[cfg(test)]
 mod tests {
-    use super::Content;
+    use super::{Content, Response};
 
     #[test]
     fn serde_content() {
@@ -154,5 +201,11 @@ mod tests {
                 text: String::from("foobar")
             }
         );
+    }
+
+    #[test]
+    fn serde_error_resp() {
+        let json = r#"{"type":"error","error":{"type":"invalid_request_error","message":"messages.0.content.0.image.source.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'"}}"#;
+        let c: Response = serde_json::from_str(json).unwrap();
     }
 }
