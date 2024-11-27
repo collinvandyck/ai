@@ -14,38 +14,52 @@ use tokio::sync::Mutex;
 struct AccStream<S, Acc, F> {
     acc: Arc<Mutex<Acc>>,
     stream: S,
-    func: F,
+    func: Pin<Box<F>>,
 }
 
 impl<S, Acc, F, Fut> Stream for AccStream<S, Acc, F>
 where
     S: Stream + Unpin,
-    F: Fn() -> Fut + Unpin,
+    S::Item: Clone,
+    F: Fn(Arc<Mutex<Acc>>, S::Item) -> Fut,
     Fut: Future<Output = i32>,
 {
     type Item = (S::Item, Arc<Mutex<Acc>>);
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
-        Pin::new(&mut this.stream)
-            .poll_next(cx)
-            .map(|item| item.map(|item| (item, this.acc.clone())))
+        Pin::new(&mut this.stream).poll_next(cx).map(|item| {
+            item.map(|item| {
+                // call the closure
+                // return the tuple
+                println!("calling closure");
+                let res = (this.func)(this.acc.clone(), item.clone());
+                (item, this.acc.clone())
+            })
+        })
     }
 }
 
-trait AccStreamExt<S> {
-    fn acc_stream<Acc, F>(self, acc: Acc, func: F) -> AccStream<S, Acc, F>;
+trait AccStreamExt<T> {
+    fn acc_stream<Acc, F, Fut>(self, acc: Acc, func: F) -> AccStream<T, Acc, F>
+    where
+        T: Stream + Unpin,
+        F: Fn(Arc<Mutex<Acc>>, T::Item) -> Fut;
 }
 
 impl<T> AccStreamExt<T> for T
 where
-    T: Stream,
+    T: Stream + Unpin,
+    T::Item: Clone,
 {
-    fn acc_stream<Acc, F>(self, acc: Acc, func: F) -> AccStream<T, Acc, F> {
+    fn acc_stream<Acc, F, Fut>(self, acc: Acc, func: F) -> AccStream<T, Acc, F>
+    where
+        F: Fn(Arc<Mutex<Acc>>, T::Item) -> Fut,
+    {
         AccStream {
             acc: Arc::new(Mutex::new(acc)),
             stream: self,
-            func,
+            func: Box::pin(func),
         }
     }
 }
@@ -54,11 +68,17 @@ where
 mod tests {
     use crate::anthropic::stream::AccStreamExt;
     use futures::{stream, StreamExt};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     #[tokio::test]
     async fn test_acc_stream() {
         let s = stream::iter(&[1, 2, 3]);
-        let mut s = s.acc_stream(0_i32, || async { 42 });
+        let mut s = s.acc_stream(0_i32, |acc, i| async move {
+            println!("{i}");
+            let acc = acc.lock().await;
+            42
+        });
         let (i, _) = s.next().await.unwrap();
         assert_eq!(i, &1);
     }
