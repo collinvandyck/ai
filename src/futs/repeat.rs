@@ -1,9 +1,11 @@
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
+use tokio::pin;
 
 pub struct Repeat<F, Fut> {
     f: Box<F>,
@@ -20,6 +22,33 @@ where
             f: Box::new(f),
             state: RepeatState::Empty,
         }
+    }
+}
+
+fn boxed_fut_fn<F, Fut, Item>(f: F) -> impl Fn() -> BoxFuture<'static, Item>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Item> + Send,
+{
+    let af = Arc::new(f);
+    move || {
+        let af = af.clone();
+        Box::pin(async move {
+            //
+            af().await
+        })
+    }
+}
+
+fn new_closure<F, Fut, Item>(f: F) -> impl Stream<Item = Item>
+where
+    F: Fn() -> Fut + Sync + Send + 'static,
+    Fut: Future<Output = Item> + Send,
+{
+    let f = boxed_fut_fn(f);
+    Repeat {
+        state: RepeatState::Empty,
+        f: Box::new(f),
     }
 }
 
@@ -69,6 +98,13 @@ mod repeat_test {
     #[tokio::test]
     async fn repeat_test() {
         let mut s = Repeat::new(|| Box::pin(async { 42 }));
+        assert_eq!(s.next().await.unwrap(), 42);
+        assert_eq!(s.next().await.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn repeat_test_2() {
+        let mut s = new_closure(|| async { 42 });
         assert_eq!(s.next().await.unwrap(), 42);
         assert_eq!(s.next().await.unwrap(), 42);
     }
