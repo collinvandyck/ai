@@ -136,7 +136,14 @@ impl Client {
             .eventsource();
         tracing::info!("built stream");
         while let Some(event) = stream.next().await {
-            tracing::info!("Got event: {event:#?}");
+            match event {
+                Ok(event) => {
+                    tracing::info!("{event:#?}");
+                }
+                Err(err) => {
+                    anyhow::bail!("event stream err: {err}");
+                }
+            }
         }
         tracing::info!("Done with stream.");
         todo!()
@@ -149,6 +156,28 @@ impl Client {
             .header("anthropic-version", &self.version)
             .header("content-type", "application/json")
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum StreamEvent {
+    #[serde(rename = "message_start")]
+    MessageStart(MessagesResponse),
+    #[serde(rename = "content_block_start")]
+    StartBlock {
+        index: usize,
+        content_block: Content,
+    },
+    #[serde(rename = "content_block_delta")]
+    BlockDelta { index: usize, delta: Content },
+    #[serde(rename = "content_block_stop")]
+    BlockStop { index: usize },
+    #[serde(rename = "message_delta")]
+    MessageDelta,
+    #[serde(rename = "message_stop")]
+    MessageStop(MessagesResponse),
+    #[serde(rename = "ping")]
+    Ping,
 }
 
 // Anthropic response for all of its apis
@@ -189,9 +218,11 @@ pub struct MessagesResponse {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
-enum Content {
+pub enum Content {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "text_delta")]
+    TextDelta { text: String },
     #[serde(rename = "image")]
     Image { source: ImageSource },
 }
@@ -221,7 +252,7 @@ impl Content {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ImageSource {
+pub struct ImageSource {
     #[serde(rename = "type")]
     typ: String,
     media_type: String,
