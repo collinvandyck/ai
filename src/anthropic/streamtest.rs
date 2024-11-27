@@ -5,6 +5,7 @@ use std::{
 };
 
 use futures::Stream;
+use tokio::pin;
 
 #[cfg(test)]
 mod tests {
@@ -54,8 +55,10 @@ mod tests {
 
 struct Repeat<F, Fut> {
     f: F,
-    state: RepeatState<Fut>,
+    state: RepeatState<Pin<Box<Fut>>>,
 }
+
+impl<F, Fut> Unpin for Repeat<F, Fut> {}
 
 impl<F, Fut, Item> Repeat<F, Fut>
 where
@@ -77,15 +80,16 @@ enum RepeatState<Fut> {
 
 impl<F, Fut, Item> Stream for Repeat<F, Fut>
 where
-    F: Fn() -> Fut + Unpin,
-    Fut: Future<Output = Item> + Unpin,
+    F: Fn() -> Fut,
+    Fut: Future<Output = Item>,
 {
     type Item = Item;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.as_mut();
         match &mut this.state {
             RepeatState::Empty => {
-                let mut fut = (this.f)();
+                // create a future and poll it
+                let mut fut = Box::pin((this.f)());
                 match Pin::new(&mut fut).poll(cx) {
                     Poll::Ready(val) => Poll::Ready(Some(val)),
                     Poll::Pending => {
@@ -94,13 +98,16 @@ where
                     }
                 }
             }
-            RepeatState::Future { fut } => match Pin::new(fut).poll(cx) {
-                Poll::Ready(val) => {
-                    this.state = RepeatState::Empty;
-                    Poll::Ready(Some(val))
+            RepeatState::Future { fut } => {
+                // poll again to see if it's ready
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(val) => {
+                        this.state = RepeatState::Empty;
+                        Poll::Ready(Some(val))
+                    }
+                    Poll::Pending => Poll::Pending,
                 }
-                Poll::Pending => Poll::Pending,
-            },
+            }
         }
     }
 }
@@ -108,11 +115,14 @@ where
 #[cfg(test)]
 mod repeat_test {
     use futures::StreamExt;
+    use tokio::pin;
 
     use super::*;
 
     #[tokio::test]
     async fn repeat_test() {
         let mut s = Repeat::new(|| async { 42 });
+        assert_eq!(s.next().await.unwrap(), 42);
+        assert_eq!(s.next().await.unwrap(), 42);
     }
 }
