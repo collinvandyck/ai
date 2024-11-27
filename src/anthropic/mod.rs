@@ -15,6 +15,13 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
+mod models {
+    use super::Model;
+    use std::sync::LazyLock;
+    pub static SONNET: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-sonnet-latest"));
+    pub static HAIKU: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-haiku-latest"));
+}
+
 pub struct Client {
     key: String,
     endpoint: url::Url,
@@ -22,14 +29,6 @@ pub struct Client {
     version: String,
     max_tokens: u32,
     client: reqwest::Client,
-}
-
-mod models {
-    use super::Model;
-    use std::sync::LazyLock;
-
-    pub static SONNET: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-sonnet-latest"));
-    pub static HAIKU: LazyLock<Model> = LazyLock::new(|| Model::from("claude-3-5-haiku-latest"));
 }
 
 #[derive(Debug, Clone)]
@@ -51,7 +50,7 @@ impl Client {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
         let model = models::HAIKU.to_string();
         let version = String::from("2023-06-01");
-        let max_tokens = 4096;
+        let max_tokens = 1024;
         let client = reqwest::ClientBuilder::default()
             .timeout(Duration::from_secs(10))
             .build()
