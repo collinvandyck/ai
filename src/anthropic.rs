@@ -41,6 +41,9 @@ impl Client {
         let body = MessagesRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
+            stream: false,
+            system: None,
+            temperature: 1.0,
             messages: vec![Message {
                 role: String::from("user"),
                 content: vec![
@@ -50,7 +53,7 @@ impl Client {
             }],
         };
         let req = self
-            .new_request(method, url)
+            .new_http_req(method, url)
             .json(&body)
             .build()
             .context("build request")?;
@@ -78,13 +81,16 @@ impl Client {
         let body = MessagesRequest {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
+            stream: false,
+            system: None,
+            temperature: 1.0,
             messages: vec![Message {
                 role: String::from("user"),
                 content: vec![Content::text(&msg)],
             }],
         };
         let req = self
-            .new_request(method, url)
+            .new_http_req(method, url)
             .json(&body)
             .build()
             .context("build request")?;
@@ -104,7 +110,7 @@ impl Client {
         Ok(resp)
     }
 
-    fn new_request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
+    fn new_http_req(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.client
             .request(method, url)
             .header("x-api-key", &self.key)
@@ -134,6 +140,9 @@ pub struct ServerError {
 struct MessagesRequest {
     model: String,
     max_tokens: u32,
+    stream: bool,
+    system: Option<String>,
+    temperature: f64,
     messages: Vec<Message>,
 }
 
@@ -229,7 +238,7 @@ mod tests {
             {
               "content": [
                 {
-                  "text": "Use reqwest with serde for JSON serialization/deserialization and implement the API endpoints as async functions that take a string prompt and return a Result containing the model's response.",
+                  "text": "Use reqwest with serde for JSON serialization",
                   "type": "text"
                 }
               ],
