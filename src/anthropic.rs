@@ -21,15 +21,15 @@ pub struct Client {
     client: reqwest::Client,
 }
 
-const SONNET: &str = "claude-3-5-sonnet-20241022";
-const HAIKU: &str = "claude-3-5-haiku-20241022";
+const SONNET: &str = "claude-3-5-sonnet-latest";
+const HAIKU: &str = "claude-3-5-haiku-latest";
 
 impl Client {
     pub fn new(key: String) -> Result<Self> {
         let endpoint = url::Url::parse("https://api.anthropic.com/").context("parse endpoint")?;
-        let model = String::from(HAIKU);
+        let model = String::from(SONNET);
         let version = String::from("2023-06-01");
-        let max_tokens = 1024;
+        let max_tokens = 4096;
         let client = reqwest::ClientBuilder::default()
             .timeout(Duration::from_secs(10))
             .build()
@@ -58,6 +58,7 @@ impl Client {
                     Content::text("what is in this image?"),
                 ],
             }],
+            ..Default::default()
         };
         let req = self
             .new_http_req(method, url)
@@ -93,6 +94,7 @@ impl Client {
                 role: String::from("user"),
                 content: vec![Content::text(&msg)],
             }],
+            ..Default::default()
         };
         let req = self
             .new_http_req(method, url)
@@ -126,6 +128,10 @@ impl Client {
                 role: String::from("user"),
                 content: vec![Content::text(&msg)],
             }],
+            system: Some(String::from(
+                "you are a helpful, wise modern day carl sagan.",
+            )),
+            ..Default::default()
         };
         let bjson = serde_json::to_string_pretty(&body).context("string pretty")?;
         tracing::info!("Sending request:\n{bjson}");
@@ -134,7 +140,6 @@ impl Client {
             .json(&body)
             .build()
             .context("build request")?;
-        tracing::info!("built request");
         let mut stream = self
             .client
             .execute(req)
@@ -142,7 +147,6 @@ impl Client {
             .context("exec req")?
             .bytes_stream()
             .eventsource();
-        tracing::info!("built stream");
         while let Some(event) = stream.next().await {
             match event {
                 Ok(event) => {
@@ -163,8 +167,10 @@ impl Client {
                                 print!("{delta}");
                             }
                             StreamEvent::BlockStop { index } => {}
-                            StreamEvent::MessageDelta { message } => {}
-                            StreamEvent::MessageStop => {}
+                            StreamEvent::MessageDelta { delta } => {}
+                            StreamEvent::MessageStop => {
+                                println!();
+                            }
                             StreamEvent::Ping => {}
                         },
                         Err(err) => {
@@ -179,7 +185,6 @@ impl Client {
                 }
             }
         }
-        tracing::info!("Done with stream.");
         Ok(())
     }
 
@@ -208,7 +213,7 @@ pub enum StreamEvent {
     #[serde(rename = "content_block_stop")]
     BlockStop { index: usize },
     #[serde(rename = "message_delta")]
-    MessageDelta { message: MessagesResponse },
+    MessageDelta { delta: MessagesResponse },
     #[serde(rename = "message_stop")]
     MessageStop,
     #[serde(rename = "ping")]
@@ -232,17 +237,18 @@ pub struct ServerError {
     message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 struct MessagesRequest {
     model: String,
     max_tokens: u32,
     stream: bool,
+    system: Option<String>,
     messages: Vec<Message>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 pub struct MessagesResponse {
-    #[serde(default)]
     content: Vec<Content>,
     id: String,
     model: String,

@@ -15,6 +15,7 @@ enum Command {
     Speak,
     Image,
     StreamSpeak,
+    Repl,
 }
 
 #[tokio::main]
@@ -40,8 +41,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::StreamSpeak => {
             client
-                .stream_speak("explain endianness in one paragraph")
+                .stream_speak("explain the history of endianness")
                 .await?;
+        }
+        Command::Repl => {
+            //
         }
     };
     Ok(())
