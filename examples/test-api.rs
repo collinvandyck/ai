@@ -32,6 +32,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await
             .context("explain_image")?,
     };
-    info!("Response: {resp:#?}");
+    info!("Response:\n{resp:#?}");
     Ok(())
 }
