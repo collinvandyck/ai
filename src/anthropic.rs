@@ -1,9 +1,8 @@
-use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
-
 use anyhow::{Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use reqwest::{Method, RequestBuilder};
 use serde::{Deserialize, Serialize};
+use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
 use tracing::info;
 
 pub struct Client {
@@ -73,6 +72,10 @@ impl Client {
             }
         };
         Ok(resp)
+    }
+
+    pub async fn stream_speak(&self, msg: &str) -> Result<Response> {
+        todo!()
     }
 
     pub async fn speak(&self, msg: &str) -> Result<Response> {
