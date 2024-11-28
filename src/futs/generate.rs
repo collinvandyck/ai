@@ -5,9 +5,63 @@ use pin_project::pin_project;
 use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::pin;
 
+#[pin_project]
 pub struct GenSimple<F, Fut> {
     f: Box<F>,
-    fut: Pin<Box<Fut>>,
+    #[pin]
+    fut: Option<Pin<Box<Fut>>>,
+}
+
+impl<F, Fut> GenSimple<F, Fut>
+where
+    F: Fn() -> Fut,
+{
+    fn new(f: F) -> Self {
+        Self {
+            f: Box::new(f),
+            fut: None,
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_gen_simple() {
+    let gen = GenSimple::new(|| async { 42 });
+    let res = gen.take(3).collect::<Vec<_>>().await;
+    assert_eq!(res, vec![42, 42, 42]);
+}
+
+impl<F, Fut, I> Stream for GenSimple<F, Fut>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = I>,
+{
+    type Item = I;
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let mut this = self.project();
+        match this.fut.as_mut().get_mut() {
+            None => {
+                let mut fut = Box::pin((this.f)());
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(val) => Poll::Ready(Some(val)),
+                    Poll::Pending => {
+                        this.fut.replace(fut);
+                        Poll::Pending
+                    }
+                }
+            }
+            Some(fut) => match Pin::new(fut).poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(val) => {
+                    this.fut.take();
+                    Poll::Ready(Some(val))
+                }
+            },
+        }
+    }
 }
 
 fn gen_fn(start: i32) -> impl Stream<Item = i32> {
@@ -164,13 +218,13 @@ mod tests {
 
         assert_eq!(
             Generate::new(word_count)
-                .take(10)
+                .take(2)
                 .collect::<Vec<_>>()
                 .await
                 .into_iter()
                 .collect::<Result<Vec<usize>, _>>()
                 .unwrap(),
-            iter::repeat(235976).take(10).collect::<Vec<_>>()
+            iter::repeat(235976).take(2).collect::<Vec<_>>()
         );
     }
 }

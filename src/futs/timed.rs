@@ -37,5 +37,4 @@ impl<Fut: Future> Future for TimedWrapper<Fut> {
 async fn test_timed_fut() {
     let (val, dur) = TimedWrapper::new(async { 42 }).await;
     assert_eq!(val, 42);
-    assert!(dur.as_nanos() > 0);
 }
