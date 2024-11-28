@@ -1,6 +1,7 @@
 //! my cursed collection of futures.
 
 mod generate;
+mod timed;
 
 #[cfg(test)]
 mod tests {

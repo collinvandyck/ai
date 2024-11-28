@@ -1,12 +1,56 @@
-use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
+use anyhow::{Context, Result};
+use async_stream::try_stream;
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryFutureExt};
 use pin_project::pin_project;
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::pin;
+
+pub struct GenSimple<F, Fut> {
+    f: Box<F>,
+    fut: Pin<Box<Fut>>,
+}
+
+fn gen_fn(start: i32) -> impl Stream<Item = i32> {
+    async_stream::stream! {
+        for i in start..3 {
+            yield i;
+        }
+    }
+}
+
+fn double<S: Stream<Item = i32>>(s: S) -> impl Stream<Item = i32> {
+    async_stream::stream! {
+        for await num in s {
+            yield num * 2
+        }
+    }
+}
+
+fn etc_passwd() -> impl Stream<Item = Result<String>> {
+    try_stream! {
+        let bs = tokio::fs::read("/etc/passwd").await?;
+        let s = String::from_utf8(bs)?;
+        yield s
+    }
+}
+
+#[tokio::test]
+async fn test_gen_fn() {
+    let res = gen_fn(0).collect::<Vec<_>>().await;
+    assert_eq!(res, vec![0, 1, 2]);
+
+    let res = double(gen_fn(0)).collect::<Vec<_>>().await;
+    assert_eq!(res, vec![0, 2, 4]);
+
+    let f = etc_passwd()
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .nth(0)
+        .unwrap()
+        .unwrap();
+    assert!(f.len() > 0, "{}", f.len());
+}
 
 #[pin_project]
 pub struct Generate<F, Fut> {
@@ -45,7 +89,10 @@ where
     Fut: Future<Output = Item>,
 {
     type Item = Item;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         let mut this = self.as_mut().project();
         match this.state.as_mut().get_mut() {
             GenerateState::Empty => {
