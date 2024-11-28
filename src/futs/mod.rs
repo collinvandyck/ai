@@ -2,6 +2,7 @@
 
 mod async_stream;
 mod generate;
+mod map;
 mod timed;
 
 #[cfg(test)]
