@@ -16,9 +16,12 @@ pub struct Generate<F, Fut> {
 impl<F, Fut> Generate<F, Fut>
 where
     F: Fn() -> Fut,
+    Fut: Future,
 {
     fn new(f: F) -> Self {
-        Self { f: Box::new(f), fut: None }
+        let gen = Self { f: Box::new(f), fut: None };
+        must_stream(&gen);
+        gen
     }
 }
 
@@ -47,64 +50,6 @@ where
                     this.fut.take();
                     Poll::Ready(Some(val))
                 }
-            },
-        }
-    }
-}
-
-#[pin_project]
-pub struct GenOld<F, Fut> {
-    f: Box<F>,
-    #[pin]
-    state: GenerateState<Fut>,
-}
-
-#[pin_project]
-enum GenerateState<Fut> {
-    Empty,
-    Future {
-        #[pin]
-        fut: Pin<Box<Fut>>,
-    },
-}
-
-impl<F, Fut, Item> GenOld<F, Fut>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Item>,
-{
-    fn new(f: F) -> Self {
-        let stream = Self { f: Box::new(f), state: GenerateState::Empty };
-        must_stream(&stream);
-        stream
-    }
-}
-
-impl<F, Fut, Item> Stream for GenOld<F, Fut>
-where
-    F: Fn() -> Fut,
-    Fut: Future<Output = Item>,
-{
-    type Item = Item;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut this = self.as_mut().project();
-        match this.state.as_mut().get_mut() {
-            GenerateState::Empty => {
-                let mut fut = Box::pin((this.f)());
-                match fut.as_mut().poll(cx) {
-                    Poll::Ready(val) => Poll::Ready(Some(val)),
-                    Poll::Pending => {
-                        self.state = GenerateState::Future { fut };
-                        Poll::Pending
-                    }
-                }
-            }
-            GenerateState::Future { fut } => match fut.as_mut().poll(cx) {
-                Poll::Ready(val) => {
-                    self.state = GenerateState::Empty;
-                    Poll::Ready(Some(val))
-                }
-                Poll::Pending => Poll::Pending,
             },
         }
     }
