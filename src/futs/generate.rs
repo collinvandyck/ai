@@ -1,46 +1,34 @@
+use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
+
 use anyhow::{Context, Result};
 use async_stream::try_stream;
 use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryFutureExt};
 use pin_project::pin_project;
-use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
 use tokio::pin;
 
 #[pin_project]
-pub struct GenSimple<F, Fut> {
+pub struct Generate<F, Fut> {
     f: Box<F>,
     #[pin]
     fut: Option<Pin<Box<Fut>>>,
 }
 
-impl<F, Fut> GenSimple<F, Fut>
+impl<F, Fut> Generate<F, Fut>
 where
     F: Fn() -> Fut,
 {
     fn new(f: F) -> Self {
-        Self {
-            f: Box::new(f),
-            fut: None,
-        }
+        Self { f: Box::new(f), fut: None }
     }
 }
 
-#[tokio::test]
-async fn test_gen_simple() {
-    let gen = GenSimple::new(|| async { 42 });
-    let res = gen.take(3).collect::<Vec<_>>().await;
-    assert_eq!(res, vec![42, 42, 42]);
-}
-
-impl<F, Fut, I> Stream for GenSimple<F, Fut>
+impl<F, Fut, I> Stream for Generate<F, Fut>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = I>,
 {
     type Item = I;
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         match this.fut.as_mut().get_mut() {
             None => {
@@ -96,18 +84,12 @@ async fn test_gen_fn() {
     let res = double(gen_fn(0)).collect::<Vec<_>>().await;
     assert_eq!(res, vec![0, 2, 4]);
 
-    let f = etc_passwd()
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .nth(0)
-        .unwrap()
-        .unwrap();
+    let f = etc_passwd().collect::<Vec<_>>().await.into_iter().nth(0).unwrap().unwrap();
     assert!(f.len() > 0, "{}", f.len());
 }
 
 #[pin_project]
-pub struct Generate<F, Fut> {
+pub struct GenOld<F, Fut> {
     f: Box<F>,
     #[pin]
     state: GenerateState<Fut>,
@@ -122,31 +104,25 @@ enum GenerateState<Fut> {
     },
 }
 
-impl<F, Fut, Item> Generate<F, Fut>
+impl<F, Fut, Item> GenOld<F, Fut>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Item>,
 {
     fn new(f: F) -> Self {
-        let stream = Self {
-            f: Box::new(f),
-            state: GenerateState::Empty,
-        };
+        let stream = Self { f: Box::new(f), state: GenerateState::Empty };
         must_stream(&stream);
         stream
     }
 }
 
-impl<F, Fut, Item> Stream for Generate<F, Fut>
+impl<F, Fut, Item> Stream for GenOld<F, Fut>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Item>,
 {
     type Item = Item;
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.as_mut().project();
         match this.state.as_mut().get_mut() {
             GenerateState::Empty => {
@@ -175,21 +151,20 @@ fn must_stream<T>(s: &dyn Stream<Item = T>) {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{iter, time::Instant};
+
     use anyhow::{Context, Result};
     use futures::StreamExt;
-    use std::{iter, time::Instant};
     use tokio::{pin, sync::Mutex};
     use tracing::instrument;
     use tracing_test::traced_test;
 
+    use super::*;
+
     #[tokio::test]
     #[traced_test]
     async fn generate() {
-        let s = Generate::new(|| async { 1 })
-            .take(3)
-            .collect::<Vec<_>>()
-            .await;
+        let s = Generate::new(|| async { 1 }).take(3).collect::<Vec<_>>().await;
         assert_eq!(s, vec![1, 1, 1]);
 
         let a = 42;
@@ -199,7 +174,6 @@ mod tests {
             42
         };
         assert_eq!(Generate::new(|| async { foo() + 1 }).next().await, Some(43));
-
         async fn word_count() -> Result<usize> {
             let start = Instant::now();
             let res = tokio::fs::read("/usr/share/dict/words")
@@ -211,10 +185,7 @@ mod tests {
             res
         }
 
-        assert_eq!(
-            Generate::new(word_count).next().await.transpose().unwrap(),
-            Some(235976)
-        );
+        assert_eq!(Generate::new(word_count).next().await.transpose().unwrap(), Some(235976));
 
         assert_eq!(
             Generate::new(word_count)

@@ -34,10 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             info!("Response:\n{resp:#?}");
         }
         Command::Image => {
-            let resp = client
-                .explain_image("images/collin.jpeg")
-                .await
-                .context("explain_image")?;
+            let resp = client.explain_image("images/collin.jpeg").await.context("explain_image")?;
             info!("Response:\n{resp:#?}");
         }
         Command::StreamSpeak => {

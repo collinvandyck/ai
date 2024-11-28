@@ -36,14 +36,7 @@ impl Client {
             .timeout(Duration::from_secs(10))
             .build()
             .context("build http client")?;
-        Ok(Self {
-            key,
-            endpoint,
-            model,
-            version,
-            max_tokens,
-            client,
-        })
+        Ok(Self { key, endpoint, model, version, max_tokens, client })
     }
 
     pub async fn speak(&self, msg: &str) -> Result<Response> {
@@ -86,9 +79,7 @@ impl Client {
                 role: String::from("user"),
                 content: vec![Content::text(&msg)],
             }],
-            system: Some(String::from(
-                "you are a helpful, wise modern day carl sagan.",
-            )),
+            system: Some(String::from("you are a helpful, wise modern day carl sagan.")),
             ..Default::default()
         };
         self.post_streaming_to_stream(req)
@@ -111,11 +102,7 @@ impl Client {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = req.into();
-        let req = self
-            .new_http_req(method, url)
-            .json(&body)
-            .build()
-            .context("build request")?;
+        let req = self.new_http_req(method, url).json(&body).build().context("build request")?;
         let resp = self.client.execute(req).await.context("exec req")?;
         let code = resp.status();
         let text = resp.text().await.context("resp text")?;
@@ -141,18 +128,9 @@ impl Client {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = req.into();
-        let req = self
-            .new_http_req(method, url)
-            .json(&body)
-            .build()
-            .context("build request")?;
-        let stream = self
-            .client
-            .execute(req)
-            .await
-            .context("exec req")?
-            .bytes_stream()
-            .eventsource();
+        let req = self.new_http_req(method, url).json(&body).build().context("build request")?;
+        let stream =
+            self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
         let stream = event_stream_to_text_events(stream);
         Ok(stream)
     }
@@ -164,18 +142,9 @@ impl Client {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = req.into();
-        let req = self
-            .new_http_req(method, url)
-            .json(&body)
-            .build()
-            .context("build request")?;
-        let mut stream = self
-            .client
-            .execute(req)
-            .await
-            .context("exec req")?
-            .bytes_stream()
-            .eventsource();
+        let req = self.new_http_req(method, url).json(&body).build().context("build request")?;
+        let mut stream =
+            self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
         let (tx, rx) = mpsc::channel(64);
         tokio::spawn(stream_text_events(stream, tx));
         Ok(rx)
@@ -434,26 +403,20 @@ impl std::fmt::Display for Content {
         match self {
             Content::Text { text } => write!(f, "{text}"),
             Content::TextDelta { text } => write!(f, "{text}"),
-            Content::Image {
-                source: ImageSource {
-                    media_type, data, ..
-                },
-            } => write!(f, "[{media_type} ({} bytes)]", data.len()),
+            Content::Image { source: ImageSource { media_type, data, .. } } => {
+                write!(f, "[{media_type} ({} bytes)]", data.len())
+            }
         }
     }
 }
 
 impl Content {
     fn text(s: impl ToString) -> Self {
-        Content::Text {
-            text: s.to_string(),
-        }
+        Content::Text { text: s.to_string() }
     }
 
     async fn image_path(p: impl AsRef<Path>) -> Result<Self> {
-        let mime = mime_guess::from_path(&p)
-            .first()
-            .context("no mime type from filename")?;
+        let mime = mime_guess::from_path(&p).first().context("no mime type from filename")?;
         let bs = tokio::fs::read(&p).await.context("read file")?;
         let mut data = String::new();
         BASE64_STANDARD.encode_string(&bs, &mut data);
@@ -496,12 +459,7 @@ mod tests {
     fn serde_content() {
         let js = r#"{"type":"text", "text":"foobar"}"#;
         let c: Content = serde_json::from_str(js).unwrap();
-        assert_eq!(
-            c,
-            Content::Text {
-                text: String::from("foobar")
-            }
-        );
+        assert_eq!(c, Content::Text { text: String::from("foobar") });
     }
 
     #[test]
@@ -545,38 +503,17 @@ mod tests {
 
     #[test]
     fn response_merge() {
-        let mut r1 = MessagesResponse {
-            usage: None,
-            ..Default::default()
-        };
+        let mut r1 = MessagesResponse { usage: None, ..Default::default() };
         let r2 = MessagesResponse {
-            usage: Some(Usage {
-                input_tokens: 42,
-                output_tokens: 420,
-            }),
+            usage: Some(Usage { input_tokens: 42, output_tokens: 420 }),
             ..Default::default()
         };
         r1.extend(r2);
-        assert_eq!(
-            r1.usage,
-            Some(Usage {
-                input_tokens: 42,
-                output_tokens: 420,
-            })
-        );
+        assert_eq!(r1.usage, Some(Usage { input_tokens: 42, output_tokens: 420 }));
         r1.extend(MessagesResponse {
-            usage: Some(Usage {
-                input_tokens: 42,
-                output_tokens: 420,
-            }),
+            usage: Some(Usage { input_tokens: 42, output_tokens: 420 }),
             ..Default::default()
         });
-        assert_eq!(
-            r1.usage,
-            Some(Usage {
-                input_tokens: 42 * 2,
-                output_tokens: 420 * 2,
-            })
-        );
+        assert_eq!(r1.usage, Some(Usage { input_tokens: 42 * 2, output_tokens: 420 * 2 }));
     }
 }

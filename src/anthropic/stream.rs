@@ -56,11 +56,7 @@ where
     where
         F: Fn(Arc<Mutex<Acc>>, T::Item) -> Fut,
     {
-        AccStream {
-            acc: Arc::new(Mutex::new(acc)),
-            stream: self,
-            func: Box::pin(func),
-        }
+        AccStream { acc: Arc::new(Mutex::new(acc)), stream: self, func: Box::pin(func) }
     }
 }
 

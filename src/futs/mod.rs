@@ -24,10 +24,7 @@ mod tests {
         let s = s.collect::<Vec<_>>().await;
         assert_eq!(s, vec![3, 3, 3]);
 
-        let s = stream::iter([1, 2, 3])
-            .map(|f| f * 2)
-            .collect::<Vec<_>>()
-            .await;
+        let s = stream::iter([1, 2, 3]).map(|f| f * 2).collect::<Vec<_>>().await;
         assert_eq!(s, vec![2, 4, 6]);
 
         let mut acc = 0;
