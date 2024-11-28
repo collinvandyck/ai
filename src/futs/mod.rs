@@ -1,5 +1,6 @@
 //! my cursed collection of futures.
 
+mod async_stream;
 mod generate;
 mod timed;
 
