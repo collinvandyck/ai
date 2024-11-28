@@ -9,6 +9,9 @@ use tokio::pin;
 #[pin_project]
 pub struct Generate<F, Fut> {
     f: Box<F>,
+
+    // ends up double pinning a little bit but this allows us to avoid needing Unpin on the closure
+    // passed to Generate::new.
     #[pin]
     fut: Option<Pin<Box<Fut>>>,
 }
