@@ -6,6 +6,7 @@ use futures::{FutureExt, Stream, StreamExt, TryFutureExt, future::BoxFuture};
 use pin_project::pin_project;
 use tokio::pin;
 
+/// A stream which yields the values produced by a supplied closure.
 #[pin_project]
 pub struct Generate<F, Fut> {
     f: Box<F>,
