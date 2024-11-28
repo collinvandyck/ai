@@ -47,14 +47,13 @@ where
     type Item = Item;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.as_mut().project();
-        let state = this.state.as_mut().get_mut();
-        match state {
+        match this.state.as_mut().get_mut() {
             GenerateState::Empty => {
                 let mut fut = Box::pin((this.f)());
                 match fut.as_mut().poll(cx) {
                     Poll::Ready(val) => Poll::Ready(Some(val)),
                     Poll::Pending => {
-                        *this.state = GenerateState::Future { fut };
+                        self.state = GenerateState::Future { fut };
                         Poll::Pending
                     }
                 }
