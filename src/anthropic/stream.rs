@@ -62,10 +62,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::anthropic::stream::AccStreamExt;
-    use futures::{stream, StreamExt};
     use std::sync::Arc;
+
+    use futures::{StreamExt, stream};
     use tokio::sync::Mutex;
+
+    use crate::anthropic::stream::AccStreamExt;
 
     #[tokio::test]
     async fn test_acc_stream() {

@@ -5,8 +5,9 @@ mod timed;
 
 #[cfg(test)]
 mod tests {
+    use futures::{StreamExt, stream};
+
     use super::*;
-    use futures::{stream, StreamExt};
 
     #[tokio::test]
     async fn test_streams() {
@@ -37,10 +38,8 @@ mod tests {
         .await;
         assert_eq!(s, vec![1, 2, 3]);
 
-        let s = stream::unfold(0, |i| async move { (i < 3).then_some((i * 2, i + 1)) })
-            .take(3)
-            .collect::<Vec<_>>()
-            .await;
+        let s =
+            stream::unfold(0, |i| async move { (i < 3).then_some((i * 2, i + 1)) }).take(3).collect::<Vec<_>>().await;
         assert_eq!(s, vec![0, 2, 4]);
     }
 }

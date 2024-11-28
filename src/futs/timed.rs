@@ -1,9 +1,10 @@
-use pin_project::pin_project;
 use std::{
     future::Future,
     task::{Context as TaskCtx, Poll},
     time::{Duration, Instant},
 };
+
+use pin_project::pin_project;
 use tracing::*;
 
 #[pin_project]

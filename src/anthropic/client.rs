@@ -1,9 +1,3 @@
-use anyhow::{Context, Result};
-use base64::{prelude::BASE64_STANDARD, Engine};
-use eventsource_stream::Eventsource;
-use futures::{channel::mpsc::Receiver, Stream, StreamExt, TryStreamExt};
-use reqwest::{Method, RequestBuilder};
-use serde::{Deserialize, Serialize};
 use std::{
     borrow::BorrowMut,
     io::{self, Read, Write},
@@ -13,6 +7,13 @@ use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
+
+use anyhow::{Context, Result};
+use base64::{Engine, prelude::BASE64_STANDARD};
+use eventsource_stream::Eventsource;
+use futures::{Stream, StreamExt, TryStreamExt, channel::mpsc::Receiver};
+use reqwest::{Method, RequestBuilder};
+use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use super::models;
@@ -32,10 +33,8 @@ impl Client {
         let model = models::HAIKU.to_string();
         let version = String::from("2023-06-01");
         let max_tokens = 1024;
-        let client = reqwest::ClientBuilder::default()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .context("build http client")?;
+        let client =
+            reqwest::ClientBuilder::default().timeout(Duration::from_secs(10)).build().context("build http client")?;
         Ok(Self { key, endpoint, model, version, max_tokens, client })
     }
 
@@ -44,10 +43,7 @@ impl Client {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             stream: false,
-            messages: vec![Message {
-                role: String::from("user"),
-                content: vec![Content::text(&msg)],
-            }],
+            messages: vec![Message { role: String::from("user"), content: vec![Content::text(msg)] }],
             ..Default::default()
         })
         .await
@@ -75,12 +71,8 @@ impl Client {
             model: self.model.clone(),
             max_tokens: self.max_tokens,
             stream: true,
-            messages: vec![Message {
-                role: String::from("user"),
-                content: vec![Content::text(&msg)],
-            }],
+            messages: vec![Message { role: String::from("user"), content: vec![Content::text(msg)] }],
             system: Some(String::from("you are a helpful, wise modern day carl sagan.")),
-            ..Default::default()
         };
         self.post_streaming_to_stream(req)
             .await?
@@ -90,7 +82,7 @@ impl Client {
                         print!("{s}");
                         io::stdout().flush().context("flush stdout")?;
                     }
-                    TextStreamEvent::EOF(_) => {}
+                    TextStreamEvent::Eof(_) => {}
                 };
                 Ok(())
             })
@@ -129,22 +121,17 @@ impl Client {
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = req.into();
         let req = self.new_http_req(method, url).json(&body).build().context("build request")?;
-        let stream =
-            self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
+        let stream = self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
         let stream = event_stream_to_text_events(stream);
         Ok(stream)
     }
 
-    async fn post_streaming(
-        &self,
-        req: impl Into<MessagesRequest>,
-    ) -> Result<mpsc::Receiver<Result<TextStreamEvent>>> {
+    async fn post_streaming(&self, req: impl Into<MessagesRequest>) -> Result<mpsc::Receiver<Result<TextStreamEvent>>> {
         let method = reqwest::Method::POST;
         let url = self.endpoint.join("/v1/messages").context("build url")?;
         let body = req.into();
         let req = self.new_http_req(method, url).json(&body).build().context("build request")?;
-        let mut stream =
-            self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
+        let mut stream = self.client.execute(req).await.context("exec req")?.bytes_stream().eventsource();
         let (tx, rx) = mpsc::channel(64);
         tokio::spawn(stream_text_events(stream, tx));
         Ok(rx)
@@ -162,17 +149,12 @@ impl Client {
 #[derive(Debug)]
 enum TextStreamEvent {
     Fragment(String),
-    EOF(MessagesResponse),
+    Eof(MessagesResponse),
 }
 
 fn event_stream_to_text_events<S>(stream: S) -> impl Stream<Item = Result<TextStreamEvent>>
 where
-    S: Stream<
-        Item = Result<
-            eventsource_stream::Event,
-            eventsource_stream::EventStreamError<reqwest::Error>,
-        >,
-    >,
+    S: Stream<Item = Result<eventsource_stream::Event, eventsource_stream::EventStreamError<reqwest::Error>>>,
 {
     type Mutex<T> = tokio::sync::Mutex<T>;
     let res = MessagesResponse::default();
@@ -180,8 +162,7 @@ where
     stream
         .map(|e| e.context("event stream error"))
         .and_then(|e| async move {
-            serde_json::from_str::<ServerStreamEvent>(&e.data)
-                .context("parse ServerStreamEvent json")
+            serde_json::from_str::<ServerStreamEvent>(&e.data).context("parse ServerStreamEvent json")
         })
         .and_then(move |sse| {
             let msg = res.clone();
@@ -217,7 +198,7 @@ where
                     }
                     ServerStreamEvent::MessageStop => {
                         let msg = msg.lock().await.take().context("no acc")?;
-                        Ok(Some(TextStreamEvent::EOF(msg)))
+                        Ok(Some(TextStreamEvent::Eof(msg)))
                     }
                     ServerStreamEvent::Ping => Ok(None),
                 }
@@ -235,12 +216,7 @@ where
 /// consumes the eventsource stream and produces TextStreamEvents onto the supplied sender
 async fn stream_text_events<S>(stream: S, tx: mpsc::Sender<Result<TextStreamEvent>>)
 where
-    S: Stream<
-        Item = Result<
-            eventsource_stream::Event,
-            eventsource_stream::EventStreamError<reqwest::Error>,
-        >,
-    >,
+    S: Stream<Item = Result<eventsource_stream::Event, eventsource_stream::EventStreamError<reqwest::Error>>>,
 {
     let mut process = |mut stream: S, tx: mpsc::Sender<Result<TextStreamEvent>>| async move {
         tokio::pin!(stream);
@@ -281,7 +257,7 @@ where
     };
     let res = process(stream, tx.clone()).await;
     if let Err(err) = res {
-        let _ = tx.send(Err(err.into())).await;
+        let _ = tx.send(Err(err)).await;
     }
 }
 
@@ -421,11 +397,7 @@ impl Content {
         let mut data = String::new();
         BASE64_STANDARD.encode_string(&bs, &mut data);
         Ok(Self::Image {
-            source: ImageSource {
-                typ: String::from("base64"),
-                media_type: mime.to_string(),
-                data: data.to_string(),
-            },
+            source: ImageSource { typ: String::from("base64"), media_type: mime.to_string(), data: data.to_string() },
         })
     }
 }
@@ -504,10 +476,7 @@ mod tests {
     #[test]
     fn response_merge() {
         let mut r1 = MessagesResponse { usage: None, ..Default::default() };
-        let r2 = MessagesResponse {
-            usage: Some(Usage { input_tokens: 42, output_tokens: 420 }),
-            ..Default::default()
-        };
+        let r2 = MessagesResponse { usage: Some(Usage { input_tokens: 42, output_tokens: 420 }), ..Default::default() };
         r1.extend(r2);
         assert_eq!(r1.usage, Some(Usage { input_tokens: 42, output_tokens: 420 }));
         r1.extend(MessagesResponse {

@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin, sync::Arc, task::Poll};
 
 use anyhow::{Context, Result};
 use async_stream::try_stream;
-use futures::{future::BoxFuture, FutureExt, Stream, StreamExt, TryFutureExt};
+use futures::{FutureExt, Stream, StreamExt, TryFutureExt, future::BoxFuture};
 use pin_project::pin_project;
 use tokio::pin;
 
@@ -84,8 +84,8 @@ async fn test_gen_fn() {
     let res = double(gen_fn(0)).collect::<Vec<_>>().await;
     assert_eq!(res, vec![0, 2, 4]);
 
-    let f = etc_passwd().collect::<Vec<_>>().await.into_iter().nth(0).unwrap().unwrap();
-    assert!(f.len() > 0, "{}", f.len());
+    let f = etc_passwd().collect::<Vec<_>>().await.into_iter().next().unwrap().unwrap();
+    assert!(!f.is_empty(), "{}", f.len());
 }
 
 #[pin_project]

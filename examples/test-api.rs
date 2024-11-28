@@ -27,10 +27,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = ai::anthropic::Client::new(key).context("new client")?;
     match &args.cmd {
         Command::Speak => {
-            let resp = client
-                .speak("any one sentence tips for writing an anthropic rust client?")
-                .await
-                .context("speak")?;
+            let resp =
+                client.speak("any one sentence tips for writing an anthropic rust client?").await.context("speak")?;
             info!("Response:\n{resp:#?}");
         }
         Command::Image => {
