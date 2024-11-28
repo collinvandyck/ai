@@ -12,23 +12,20 @@ pub struct Repeat<F, Fut> {
     state: RepeatState<Fut>,
 }
 
+fn must_stream<T>(s: &dyn Stream<Item = T>) {}
+
 impl<F, Fut, Item> Repeat<F, Fut>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Item> + Unpin,
 {
     fn new(f: F) -> Self {
-        Self {
+        let stream = Self {
             f: Box::new(f),
             state: RepeatState::Empty,
-        }
-    }
-
-    fn from_closure(f: F) -> impl Stream<Item = Item> {
-        Self {
-            f: Box::new(f),
-            state: RepeatState::Empty,
-        }
+        };
+        must_stream(&stream);
+        stream
     }
 }
 
@@ -101,43 +98,6 @@ mod repeat_test {
     use super::*;
     use futures::StreamExt;
     use tokio::{pin, sync::Mutex};
-
-    #[test]
-    fn test_mutex() {
-        let val = std::sync::Mutex::new(42);
-        let f1 = || {
-            let mut val = val.lock().unwrap();
-            *val += 1;
-            *val
-        };
-        let f2 = || {
-            let mut val = val.lock().unwrap();
-            *val += 1;
-            *val
-        };
-        assert_eq!(f1(), 43);
-        assert_eq!(f2(), 44);
-        assert_eq!(f1(), 45);
-    }
-
-    #[test]
-    fn test_arc() {
-        //
-        let val = Arc::new(std::sync::Mutex::new(42));
-        let f1 = || {
-            let mut val = val.lock().unwrap();
-            *val += 1;
-            *val
-        };
-        let f2 = || {
-            let mut val = val.lock().unwrap();
-            *val += 1;
-            *val
-        };
-        assert_eq!(f1(), 43);
-        assert_eq!(f2(), 44);
-        assert_eq!(f1(), 45);
-    }
 
     #[tokio::test]
     async fn repeat_mut() {
