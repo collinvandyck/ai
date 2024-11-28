@@ -103,6 +103,24 @@ mod repeat_test {
     use tokio::{pin, sync::Mutex};
 
     #[test]
+    fn test_mutex() {
+        let val = std::sync::Mutex::new(42);
+        let f1 = || {
+            let mut val = val.lock().unwrap();
+            *val += 1;
+            *val
+        };
+        let f2 = || {
+            let mut val = val.lock().unwrap();
+            *val += 1;
+            *val
+        };
+        assert_eq!(f1(), 43);
+        assert_eq!(f2(), 44);
+        assert_eq!(f1(), 45);
+    }
+
+    #[test]
     fn test_arc() {
         //
         let val = Arc::new(std::sync::Mutex::new(42));
