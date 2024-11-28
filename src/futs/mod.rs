@@ -1,6 +1,6 @@
 //! my cursed collection of futures.
 
-mod repeat;
+mod generate;
 
 #[cfg(test)]
 mod tests {
