@@ -37,16 +37,20 @@ where
 
 #[tokio::test]
 async fn test_gen_closure() {
+    // a stream that's !Unpin means we need to pin the fut if we're going to call next on it
     let s = gen_closure(|| async { 1 }).take(3).collect::<Vec<_>>().await;
     assert_eq!(s, vec![1, 1, 1]);
-
-    // ugh
     let a = 42;
     let fut = gen_closure(|| async { a + 1 });
     tokio::pin!(fut);
     assert_eq!(fut.next().await, Some(43));
+    // however, we should be able to call non-next methods on it.
+    let fut = gen_closure(|| async { a + 1 });
+    assert_eq!(fut.take(3).collect::<Vec<_>>().await, vec![43, 43, 43]);
 
+    // if the returned stream is pinned, we have no problem calling next, or any other method.
     let a = 42;
+    assert_eq!(gen_closure_pinned(|| async { 42 }).next().await, Some(42));
     assert_eq!(gen_closure_pinned(|| async { a + 1 }).next().await, Some(43));
 }
 
